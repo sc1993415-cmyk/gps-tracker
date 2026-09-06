@@ -1,2 +1,1 @@
-// Placeholder: MQTT client / subscribe telemetry/{device_id}
-export {};
+export {}; // TODO: subscribe telemetry/{device_id}

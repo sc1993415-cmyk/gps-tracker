@@ -1,4 +1,3 @@
-// Placeholder: telemetry types matching MQTT JSON
 export type Telemetry = {
   device_id: string;
   lat: number;
