@@ -9,4 +9,6 @@ export type Telemetry = {
   name: string;
   distance: number;
   climb: number;
+  /** Optional course/heading in degrees (0–360), e.g. from GPRMC */
+  heading?: number;
 };
