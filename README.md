@@ -6,7 +6,7 @@
 - `apps/overlay` 主图+数据条 / 海拔剖面
 - `apps/receiver` MQTT 接收 + 降采样 + WebSocket + demo 假数据
 - `packages/schema` 遥测类型与样例
-- `docs/` OBS/vMix、MQTT、环境变量
+- `docs/` OBS/vMix、MQTT、环境变量、[MT909 TCP](docs/mt909-tcp.md)
 
 ## 快速 Demo（本地）
 前置：Node 20+，pnpm（或改 npm）
