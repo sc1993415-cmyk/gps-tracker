@@ -1,0 +1,9 @@
+{
+  "name": "overlay",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "echo TODO vite/dev server placeholder"
+  }
+}
