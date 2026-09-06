@@ -4,6 +4,16 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "demo": "echo TODO mqtt receive + downsample + ws + demo publisher"
+    "demo": "tsx src/index.ts --demo",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "mqtt": "^5.10.3",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
   }
 }

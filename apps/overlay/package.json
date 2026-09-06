@@ -4,6 +4,14 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "echo TODO vite/dev server placeholder"
+    "dev": "vite",
+    "build": "vite build"
+  },
+  "dependencies": {
+    "maplibre-gl": "^4.7.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
   }
 }
