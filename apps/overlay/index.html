@@ -1,11 +1,37 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <title>gps-tracker overlay</title>
+    <style>
+      html, body, #map { margin: 0; height: 100%; background: #0b0f14; }
+      .athlete-dot {
+        width: 18px; height: 18px; border-radius: 50%;
+        background: #ff3b5c; border: 3px solid #fff; box-shadow: 0 0 12px #ff3b5c;
+      }
+      #hud {
+        position: absolute; left: 16px; right: 16px; bottom: 16px;
+        display: flex; gap: 24px; padding: 14px 18px;
+        background: rgba(8, 12, 18, 0.72); color: #fff;
+        font: 600 28px/1.1 system-ui, sans-serif; border-radius: 12px;
+        backdrop-filter: blur(8px);
+      }
+      #hud span { opacity: 0.65; font-size: 14px; font-weight: 500; display: block; }
+      #flag {
+        position: absolute; top: 16px; left: 16px;
+        background: #ff3b5c; color: #fff; padding: 8px 12px;
+        border-radius: 8px; font: 700 20px system-ui, sans-serif;
+      }
+    </style>
   </head>
   <body>
-    <!-- TODO: main map + data bar -->
+    <div id="map"></div>
+    <div id="flag">#-- --</div>
+    <div id="hud">
+      <div><span>时速 km/h</span><strong id="speed">0.0</strong></div>
+      <div><span>距离 km</span><strong id="distance">0.00</strong></div>
+      <div><span>爬升 m</span><strong id="climb">0</strong></div>
+    </div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
