@@ -1,7 +1,32 @@
-import { connectOverlayWs } from "./ws";
+import { connectOverlayWs, type OverlayState, type Participant } from "./ws";
 
 const canvas = document.querySelector("canvas") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
+
+function parseParams() {
+  const hash = location.hash.startsWith("#") ? location.hash.slice(1) : location.hash;
+  const q = new URLSearchParams(hash || location.search);
+  return {
+    selected: q.get("selected"),
+    selectedStartNumber: q.get("selectedStartNumber") || q.get("startNumber"),
+    ws: q.get("ws") || "ws://localhost:8787",
+  };
+}
+
+const params = parseParams();
+
+function pickParticipant(state: OverlayState): Participant | null {
+  const list = Object.values(state.participants);
+  if (!list.length) return null;
+  if (params.selected && state.participants[params.selected]) {
+    return state.participants[params.selected]!;
+  }
+  if (params.selectedStartNumber) {
+    const byBib = list.find((p) => p.bib === params.selectedStartNumber);
+    if (byBib) return byBib;
+  }
+  return list[0]!;
+}
 
 function draw(alts: number[], progressIdx: number) {
   const w = (canvas.width = canvas.clientWidth * devicePixelRatio);
@@ -22,14 +47,15 @@ function draw(alts: number[], progressIdx: number) {
   ctx.stroke();
   const i = Math.min(progressIdx, alts.length - 1);
   const x = (i / (alts.length - 1)) * w;
-  const y = h - ((alts[i] - min) / span) * (h - 20) - 10;
+  const y = h - ((alts[i]! - min) / span) * (h - 20) - 10;
   ctx.fillStyle = "#fff";
   ctx.beginPath();
   ctx.arc(x, y, 6 * devicePixelRatio, 0, Math.PI * 2);
   ctx.fill();
 }
 
-connectOverlayWs("ws://localhost:8787", (state) => {
-  const alts = state.trail.map((p) => p.alt_baro);
-  draw(alts, alts.length - 1);
+connectOverlayWs(params.ws, (state) => {
+  const p = pickParticipant(state);
+  const alts = (p?.trail ?? []).map((pt) => pt.alt_baro);
+  draw(alts, Math.max(0, alts.length - 1));
 });

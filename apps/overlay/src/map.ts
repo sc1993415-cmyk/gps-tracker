@@ -1,14 +1,39 @@
 import maplibregl from "maplibre-gl";
-import type { OverlayState, TrailPoint } from "./ws";
+import type { OverlayState, CourseFeature } from "./ws";
 
 const STYLE = "https://demotiles.maplibre.org/style.json";
 
-/** Duration (ms) to lerp the athlete marker between WebSocket updates. */
+/** Duration (ms) to lerp each athlete marker between WebSocket updates. */
 const MARKER_LERP_MS = 900;
-/** Stop the rAF loop once within this many degrees of the target (~1 cm at equator). */
 const LERP_EPSILON = 1e-7;
 
-export function createMap(container: string) {
+type MarkerRuntime = {
+  marker: maplibregl.Marker;
+  el: HTMLElement;
+  displayLng: number;
+  displayLat: number;
+  targetLng: number;
+  targetLat: number;
+  lerpFromLng: number;
+  lerpFromLat: number;
+  lerpStartMs: number;
+  rafId: number;
+};
+
+export type MapController = {
+  update: (
+    state: OverlayState,
+    opts: {
+      selectedId: string | null;
+      follow: boolean;
+      hideNonSelected: boolean;
+      courseOverride?: CourseFeature | null;
+    }
+  ) => void;
+  setFollow: (follow: boolean) => void;
+};
+
+export function createMap(container: string): MapController {
   const map = new maplibregl.Map({
     container,
     style: STYLE,
@@ -17,94 +42,199 @@ export function createMap(container: string) {
     attributionControl: false,
   });
 
-  const markerEl = document.createElement("div");
-  markerEl.className = "athlete-dot";
-  const marker = new maplibregl.Marker({ element: markerEl })
-    .setLngLat([121.4737, 31.2304])
-    .addTo(map);
+  const markers = new Map<string, MarkerRuntime>();
+  let followSelected = true;
+  let courseReady = false;
 
   map.on("load", () => {
-    map.addSource("trail", {
+    map.addSource("course", { type: "geojson", data: emptyLine() });
+    map.addLayer({
+      id: "course-line",
+      type: "line",
+      source: "course",
+      paint: {
+        "line-color": "#e53935",
+        "line-width": 6,
+        "line-opacity": 0.75,
+      },
+    });
+
+    map.addSource("trails", {
       type: "geojson",
-      data: emptyLine(),
+      data: { type: "FeatureCollection", features: [] },
     });
     map.addLayer({
-      id: "trail-line",
+      id: "trails-line",
       type: "line",
-      source: "trail",
-      paint: { "line-color": "#00e5ff", "line-width": 4 },
+      source: "trails",
+      paint: {
+        "line-color": ["get", "color"],
+        "line-width": ["case", ["==", ["get", "selected"], 1], 5, 2.5],
+        "line-opacity": ["case", ["==", ["get", "selected"], 1], 1, 0.45],
+      },
     });
+    courseReady = true;
   });
 
-  // Displayed (smoothed) position vs latest WebSocket target.
-  let displayLng = 121.4737;
-  let displayLat = 31.2304;
-  let targetLng = displayLng;
-  let targetLat = displayLat;
-  let lerpFromLng = displayLng;
-  let lerpFromLat = displayLat;
-  let lerpStartMs = 0;
-  let rafId = 0;
+  function ensureMarker(id: string, color: string): MarkerRuntime {
+    let rt = markers.get(id);
+    if (rt) return rt;
 
-  function tick(now: number) {
-    const t = Math.min(1, (now - lerpStartMs) / MARKER_LERP_MS);
-    // Ease-out cubic for a natural deceleration into the target.
+    const el = document.createElement("div");
+    el.className = "athlete-marker";
+    el.dataset.id = id;
+    el.style.setProperty("--dot-color", color);
+
+    const flag = document.createElement("div");
+    flag.className = "athlete-flag";
+    el.appendChild(flag);
+
+    const dot = document.createElement("div");
+    dot.className = "athlete-dot";
+    el.appendChild(dot);
+
+    const marker = new maplibregl.Marker({ element: el, anchor: "bottom" })
+      .setLngLat([121.4737, 31.2304])
+      .addTo(map);
+
+    rt = {
+      marker,
+      el,
+      displayLng: 121.4737,
+      displayLat: 31.2304,
+      targetLng: 121.4737,
+      targetLat: 31.2304,
+      lerpFromLng: 121.4737,
+      lerpFromLat: 31.2304,
+      lerpStartMs: 0,
+      rafId: 0,
+    };
+    markers.set(id, rt);
+    return rt;
+  }
+
+  function tickMarker(rt: MarkerRuntime, now: number) {
+    const t = Math.min(1, (now - rt.lerpStartMs) / MARKER_LERP_MS);
     const eased = 1 - (1 - t) ** 3;
-    displayLng = lerpFromLng + (targetLng - lerpFromLng) * eased;
-    displayLat = lerpFromLat + (targetLat - lerpFromLat) * eased;
-    marker.setLngLat([displayLng, displayLat]);
+    rt.displayLng = rt.lerpFromLng + (rt.targetLng - rt.lerpFromLng) * eased;
+    rt.displayLat = rt.lerpFromLat + (rt.targetLat - rt.lerpFromLat) * eased;
+    rt.marker.setLngLat([rt.displayLng, rt.displayLat]);
 
     if (t < 1) {
-      rafId = requestAnimationFrame(tick);
+      rt.rafId = requestAnimationFrame((n) => tickMarker(rt, n));
     } else {
-      displayLng = targetLng;
-      displayLat = targetLat;
-      marker.setLngLat([displayLng, displayLat]);
-      rafId = 0;
+      rt.displayLng = rt.targetLng;
+      rt.displayLat = rt.targetLat;
+      rt.marker.setLngLat([rt.displayLng, rt.displayLat]);
+      rt.rafId = 0;
     }
   }
 
-  function startOrRestartLerp() {
-    lerpFromLng = displayLng;
-    lerpFromLat = displayLat;
-    lerpStartMs = performance.now();
-    if (!rafId) {
-      rafId = requestAnimationFrame(tick);
+  function startOrRestartLerp(rt: MarkerRuntime) {
+    rt.lerpFromLng = rt.displayLng;
+    rt.lerpFromLat = rt.displayLat;
+    rt.lerpStartMs = performance.now();
+    if (!rt.rafId) {
+      rt.rafId = requestAnimationFrame((n) => tickMarker(rt, n));
+    }
+  }
+
+  function setCourse(course: CourseFeature | null | undefined) {
+    if (!courseReady) return;
+    const src = map.getSource("course") as maplibregl.GeoJSONSource | undefined;
+    if (!src) return;
+    if (course?.geometry?.coordinates?.length) {
+      src.setData(course);
+    } else {
+      src.setData(emptyLine());
     }
   }
 
   return {
-    update(state: OverlayState) {
-      const { lat, lng } = state.athlete;
-      targetLng = lng;
-      targetLat = lat;
+    setFollow(follow: boolean) {
+      followSelected = follow;
+    },
+    update(state, opts) {
+      const participants = Object.values(state.participants);
+      const selectedId = opts.selectedId;
+      const hideNonSelected = opts.hideNonSelected;
+      const seen = new Set<string>();
 
-      // Trail updates immediately on each state; marker eases via rAF.
-      const src = map.getSource("trail") as maplibregl.GeoJSONSource | undefined;
-      src?.setData(lineFromTrail(state.trail));
+      setCourse(
+        opts.courseOverride !== undefined ? opts.courseOverride : state.course
+      );
 
-      const dLng = Math.abs(targetLng - displayLng);
-      const dLat = Math.abs(targetLat - displayLat);
-      if (dLng > LERP_EPSILON || dLat > LERP_EPSILON) {
-        startOrRestartLerp();
+      const trailFeatures: GeoJSON.Feature[] = [];
+
+      for (const p of participants) {
+        seen.add(p.id);
+        const color = p.color || "#ff3b5c";
+        const isSelected = p.id === selectedId;
+        const visible = !hideNonSelected || isSelected;
+
+        const rt = ensureMarker(p.id, color);
+        rt.el.style.setProperty("--dot-color", color);
+        rt.el.classList.toggle("selected", isSelected);
+        rt.el.classList.toggle("hidden-marker", !visible);
+
+        const flag = rt.el.querySelector(".athlete-flag") as HTMLElement | null;
+        if (flag) {
+          flag.textContent = isSelected ? `#${p.bib} ${shortName(p.name)}` : "";
+          flag.style.display = isSelected ? "block" : "none";
+        }
+
+        rt.targetLng = p.athlete.lng;
+        rt.targetLat = p.athlete.lat;
+        const dLng = Math.abs(rt.targetLng - rt.displayLng);
+        const dLat = Math.abs(rt.targetLat - rt.displayLat);
+        if (dLng > LERP_EPSILON || dLat > LERP_EPSILON) {
+          startOrRestartLerp(rt);
+        }
+
+        if (visible && p.trail.length >= 2) {
+          trailFeatures.push({
+            type: "Feature",
+            properties: { color, id: p.id, selected: isSelected ? 1 : 0 },
+            geometry: {
+              type: "LineString",
+              coordinates: p.trail.map((pt) => [pt.lng, pt.lat]),
+            },
+          });
+        }
       }
 
-      map.easeTo({ center: [lng, lat], duration: MARKER_LERP_MS });
+      for (const [id, rt] of markers) {
+        if (!seen.has(id)) {
+          if (rt.rafId) cancelAnimationFrame(rt.rafId);
+          rt.marker.remove();
+          markers.delete(id);
+        }
+      }
+
+      const trailsSrc = map.getSource("trails") as maplibregl.GeoJSONSource | undefined;
+      trailsSrc?.setData({ type: "FeatureCollection", features: trailFeatures });
+
+      if (followSelected && selectedId) {
+        const sel = state.participants[selectedId];
+        if (sel) {
+          map.easeTo({
+            center: [sel.athlete.lng, sel.athlete.lat],
+            duration: MARKER_LERP_MS,
+          });
+        }
+      }
     },
   };
 }
 
-function emptyLine(): GeoJSON.Feature {
-  return { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: [] } };
+function shortName(name: string): string {
+  return name.length > 12 ? name.slice(0, 11) + "…" : name;
 }
 
-function lineFromTrail(trail: TrailPoint[]): GeoJSON.Feature {
+function emptyLine(): GeoJSON.Feature {
   return {
     type: "Feature",
     properties: {},
-    geometry: {
-      type: "LineString",
-      coordinates: trail.map((p) => [p.lng, p.lat]),
-    },
+    geometry: { type: "LineString", coordinates: [] },
   };
 }

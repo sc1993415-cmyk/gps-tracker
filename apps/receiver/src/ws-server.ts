@@ -3,7 +3,31 @@ import type { Telemetry } from "../../../packages/schema/src/telemetry.ts";
 
 export type TrailPoint = { lat: number; lng: number; alt_baro: number; ts: number };
 
+export type CourseFeature = {
+  type: "Feature";
+  properties?: Record<string, unknown>;
+  geometry: { type: "LineString"; coordinates: [number, number][] };
+};
+
+export type Participant = {
+  id: string;
+  bib: string;
+  name: string;
+  color?: string;
+  online: boolean;
+  athlete: Telemetry;
+  trail: TrailPoint[];
+};
+
+/** Multi-athlete live overlay payload (Phase 1). */
 export type OverlayState = {
+  event?: { name: string };
+  course?: CourseFeature | null;
+  participants: Record<string, Participant>;
+};
+
+/** Legacy single-athlete shape (kept for docs / shim reference). */
+export type LegacyOverlayState = {
   athlete: Telemetry;
   trail: TrailPoint[];
 };

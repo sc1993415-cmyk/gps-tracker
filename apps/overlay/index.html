@@ -4,30 +4,131 @@
     <meta charset="UTF-8" />
     <title>gps-tracker overlay</title>
     <style>
-      html, body, #map { margin: 0; height: 100%; background: #0b0f14; }
-      .athlete-dot {
-        width: 18px; height: 18px; border-radius: 50%;
-        background: #ff3b5c; border: 3px solid #fff; box-shadow: 0 0 12px #ff3b5c;
+      :root {
+        --hud-pad: 16px;
+        --hud-font: 28px;
+        --flag-font: 16px;
+        --dot-size: 14px;
+        --list-w: 220px;
       }
+      html.large-mode {
+        --hud-pad: 22px;
+        --hud-font: 40px;
+        --flag-font: 22px;
+        --dot-size: 18px;
+        --list-w: 260px;
+      }
+      html, body, #map { margin: 0; height: 100%; background: #0b0f14; }
+      body { overflow: hidden; font-family: system-ui, sans-serif; }
+      #top-bar {
+        position: absolute; top: 0; left: 0; right: 0; z-index: 5;
+        display: flex; align-items: center; gap: 12px;
+        padding: 10px 16px;
+        background: linear-gradient(180deg, rgba(8,12,18,0.85), transparent);
+        color: #fff; pointer-events: none;
+      }
+      #event-name { font: 700 18px/1.2 system-ui, sans-serif; letter-spacing: 0.02em; }
+      #live-badge {
+        display: inline-flex; align-items: center; gap: 6px;
+        background: #ff3b5c; color: #fff;
+        font: 700 11px/1 system-ui, sans-serif;
+        padding: 4px 8px; border-radius: 4px; letter-spacing: 0.08em;
+      }
+      #live-badge::before {
+        content: ""; width: 6px; height: 6px; border-radius: 50%;
+        background: #fff; box-shadow: 0 0 6px #fff;
+        animation: pulse 1.2s ease-in-out infinite;
+      }
+      @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+      #list-panel {
+        position: absolute; top: 52px; left: 12px; bottom: 110px; z-index: 5;
+        width: var(--list-w);
+        display: flex; flex-direction: column;
+        background: rgba(8, 12, 18, 0.78);
+        border-radius: 12px;
+        backdrop-filter: blur(10px);
+        color: #fff; overflow: hidden;
+        transition: width 0.2s ease, opacity 0.2s ease;
+      }
+      #list-panel.collapsed { width: 36px; }
+      #list-panel.collapsed #participant-list,
+      #list-panel.collapsed .list-header span { display: none; }
+      .list-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 10px 10px 6px; font: 600 12px system-ui, sans-serif;
+        opacity: 0.75; text-transform: uppercase; letter-spacing: 0.06em;
+      }
+      #list-toggle {
+        border: 0; background: rgba(255,255,255,0.08); color: #fff;
+        width: 28px; height: 28px; border-radius: 8px; cursor: pointer;
+        font-size: 16px; line-height: 1;
+      }
+      #participant-list {
+        flex: 1; overflow: auto; padding: 4px 8px 10px;
+        display: flex; flex-direction: column; gap: 4px;
+      }
+      .participant-item {
+        display: grid; grid-template-columns: 12px 32px 1fr auto 10px;
+        align-items: center; gap: 8px;
+        width: 100%; border: 0; border-radius: 8px;
+        background: transparent; color: #fff;
+        padding: 8px 8px; cursor: pointer; text-align: left;
+        font: 500 13px system-ui, sans-serif;
+      }
+      .participant-item:hover { background: rgba(255,255,255,0.08); }
+      .participant-item.active { background: rgba(255,255,255,0.14); }
+      .participant-item .dot { width: 10px; height: 10px; border-radius: 50%; }
+      .participant-item .bib { opacity: 0.7; font-variant-numeric: tabular-nums; }
+      .participant-item .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .participant-item .online { width: 8px; height: 8px; border-radius: 50%; }
+      .participant-item .online.on { background: #7cffb2; }
+      .participant-item .progress { opacity: 0.65; font-variant-numeric: tabular-nums; font-size: 12px; white-space: nowrap; }
+      .participant-item .online.off { background: #666; }
       #hud {
-        position: absolute; left: 16px; right: 16px; bottom: 16px;
-        display: flex; gap: 24px; padding: 14px 18px;
+        position: absolute; left: 16px; right: 16px; bottom: 16px; z-index: 5;
+        display: flex; gap: 24px; padding: var(--hud-pad) 18px;
         background: rgba(8, 12, 18, 0.72); color: #fff;
-        font: 600 28px/1.1 system-ui, sans-serif; border-radius: 12px;
+        font: 600 var(--hud-font)/1.1 system-ui, sans-serif; border-radius: 12px;
         backdrop-filter: blur(8px);
       }
+      #hud.hidden { display: none; }
       #hud span { opacity: 0.65; font-size: 14px; font-weight: 500; display: block; }
-      #flag {
-        position: absolute; top: 16px; left: 16px;
-        background: #ff3b5c; color: #fff; padding: 8px 12px;
-        border-radius: 8px; font: 700 20px system-ui, sans-serif;
+      .athlete-marker { display: flex; flex-direction: column; align-items: center; pointer-events: none; }
+      .athlete-marker.hidden-marker { display: none; }
+      .athlete-flag {
+        display: none; background: var(--dot-color, #ff3b5c); color: #fff;
+        padding: 6px 10px; border-radius: 8px;
+        font: 700 var(--flag-font)/1.1 system-ui, sans-serif;
+        margin-bottom: 4px; white-space: nowrap;
+        box-shadow: 0 4px 14px rgba(0,0,0,0.35);
       }
+      .athlete-marker.selected .athlete-flag { display: block; }
+      .athlete-dot {
+        width: var(--dot-size); height: var(--dot-size); border-radius: 50%;
+        background: var(--dot-color, #ff3b5c); border: 3px solid #fff;
+        box-shadow: 0 0 12px var(--dot-color, #ff3b5c);
+      }
+      .athlete-marker.selected .athlete-dot {
+        width: calc(var(--dot-size) + 6px); height: calc(var(--dot-size) + 6px);
+      }
+      html.map-only #top-bar,
+      html.map-only #list-panel { display: none !important; }
     </style>
   </head>
   <body>
     <div id="map"></div>
-    <div id="flag">#-- --</div>
-    <div id="hud">
+    <div id="top-bar">
+      <div id="event-name">Live</div>
+      <div id="live-badge">LIVE</div>
+    </div>
+    <aside id="list-panel">
+      <div class="list-header">
+        <span>Athletes</span>
+        <button id="list-toggle" type="button" title="Collapse">&#8249;</button>
+      </div>
+      <div id="participant-list"></div>
+    </aside>
+    <div id="hud" class="hidden">
       <div><span>时速 km/h</span><strong id="speed">0.0</strong></div>
       <div><span>距离 km</span><strong id="distance">0.00</strong></div>
       <div><span>爬升 m</span><strong id="climb">0</strong></div>
