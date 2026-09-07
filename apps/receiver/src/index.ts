@@ -2,6 +2,12 @@ import { createWsServer } from "./ws-server.ts";
 import { pushTrailPoint } from "./downsample.ts";
 import { startDemoPublisher, DEFAULT_ATHLETES } from "./demo-publisher.ts";
 import { startMt909TcpServer } from "./mt909-tcp.ts";
+import { startAdminServer } from "./admin-server.ts";
+import {
+  loadRoster,
+  getRosterEntry,
+  setRosterReloadHandler,
+} from "./roster.ts";
 import type { OverlayState, Participant, TrailPoint, CourseFeature } from "./ws-server.ts";
 import type { Telemetry } from "../../../packages/schema/src/telemetry.ts";
 
@@ -41,6 +47,19 @@ const deviceToParticipant = new Map<string, string>();
 
 const DEMO_COLORS = new Map(DEFAULT_ATHLETES.map((a) => [a.device_id, a.color]));
 
+loadRoster();
+startAdminServer(Number(process.env.ADMIN_PORT) || 8790);
+
+/** Merge roster bib/name/color onto an existing or new participant. */
+function applyRosterFields(p: Participant, deviceId: string) {
+  const entry = getRosterEntry(deviceId);
+  if (entry) {
+    if (entry.bib) p.bib = entry.bib;
+    if (entry.name) p.name = entry.name;
+    if (entry.color) p.color = entry.color;
+  }
+}
+
 function ensureParticipant(t: Telemetry): Participant {
   const id = deviceToParticipant.get(t.device_id) ?? t.device_id;
   deviceToParticipant.set(t.device_id, id);
@@ -63,6 +82,14 @@ function ensureParticipant(t: Telemetry): Participant {
     p.online = true;
     p.athlete = t;
   }
+
+  // Roster is source of truth for display fields when present.
+  applyRosterFields(p, t.device_id);
+
+  // Unknown device: keep device_id as name fallback if still empty.
+  if (!p.name) p.name = t.device_id;
+  if (!p.bib) p.bib = t.device_id.slice(-4);
+
   return p;
 }
 
@@ -98,6 +125,18 @@ function cloneParticipants(src: Record<string, Participant>): Record<string, Par
   }
   return out;
 }
+
+/** After admin save: re-merge roster onto live participants and push WS. */
+function reapplyRosterToParticipants() {
+  for (const [deviceId, participantId] of deviceToParticipant) {
+    const p = state.participants[participantId];
+    if (!p) continue;
+    applyRosterFields(p, deviceId);
+  }
+  emitState();
+}
+
+setRosterReloadHandler(reapplyRosterToParticipants);
 
 if (demo) {
   console.log("[demo] publishing ~1Hz fake telemetry for 3 athletes");

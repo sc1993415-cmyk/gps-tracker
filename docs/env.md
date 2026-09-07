@@ -4,6 +4,7 @@
 |------|------|------|
 | `WS_PORT` | `8787` | receiver WebSocket 监听端口 |
 | `MT909_TCP_PORT` | `5013` | Mictrack MT909 TCP listen port |
+| `ADMIN_PORT` | `8790` | Roster admin HTTP UI + /api/roster |
 
 示例：
 ```bash

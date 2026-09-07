@@ -1,0 +1,20 @@
+[
+  {
+    "device_id": "demo-1",
+    "bib": "42",
+    "name": "Alice",
+    "color": "#ff3b5c"
+  },
+  {
+    "device_id": "demo-2",
+    "bib": "7",
+    "name": "Bob",
+    "color": "#00e5ff"
+  },
+  {
+    "device_id": "demo-3",
+    "bib": "21",
+    "name": "Chen",
+    "color": "#7cffb2"
+  }
+]

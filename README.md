@@ -6,7 +6,7 @@
 - `apps/overlay` 主图+选手列表+数据条 / 海拔剖面
 - `apps/receiver` MQTT/MT909 接收 + 降采样 + WebSocket + demo 假数据（多选手）
 - `packages/schema` 遥测类型与样例
-- `docs/` OBS/vMix、MQTT、环境变量、[MT909 TCP](docs/mt909-tcp.md)、[Phase 1 叠层](docs/phase1-overlay.md)
+- `docs/` OBS/vMix、MQTT、环境变量、[MT909 TCP](docs/mt909-tcp.md)、[Phase 1 叠层](docs/phase1-overlay.md)、[名册管理](docs/roster-admin.md)
 
 ## 快速 Demo（本地）
 前置：Node 20+，pnpm（或改 npm）
@@ -24,6 +24,7 @@ pnpm --filter overlay dev
 - mapOnly http://localhost:5173/#mapOnly=true
 - 海拔剖面 http://localhost:5173/elevation.html
 - WebSocket 默认 ws://localhost:8787
+- 选手名册管理 http://localhost:8790/ （见 [docs/roster-admin.md](docs/roster-admin.md)）
 
 OBS：Browser Source 填上述 URL，透明背景按需开。
 vMix：Browser Input 同 URL。
@@ -31,3 +32,4 @@ vMix：Browser Input 同 URL。
 字段见 `packages/schema/examples/sample.json`。topic：`telemetry/{device_id}`。
 
 Phase 1（多选手 WS 形状与 URL 参数）见 [docs/phase1-overlay.md](docs/phase1-overlay.md)。
+名册 / IMEI 绑定见 [docs/roster-admin.md](docs/roster-admin.md)。

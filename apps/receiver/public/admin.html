@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Athlete Roster Admin</title>
+    <style>
+      :root {
+        --bg: #0b0f14;
+        --panel: rgba(8, 12, 18, 0.92);
+        --border: rgba(255, 255, 255, 0.1);
+        --text: #fff;
+        --muted: rgba(255, 255, 255, 0.55);
+        --accent: #ff3b5c;
+        --ok: #7cffb2;
+        --input: rgba(255, 255, 255, 0.06);
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; min-height: 100%;
+        background: var(--bg); color: var(--text);
+        font: 14px/1.45 system-ui, sans-serif;
+      }
+      body { padding: 24px 16px 48px; }
+      .wrap { max-width: 920px; margin: 0 auto; }
+      h1 {
+        margin: 0 0 6px; font: 700 22px/1.2 system-ui, sans-serif;
+        letter-spacing: 0.02em;
+      }
+      .sub { color: var(--muted); margin-bottom: 20px; font-size: 13px; }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+        backdrop-filter: blur(10px);
+      }
+      .panel h2 {
+        margin: 0 0 12px;
+        font: 600 12px/1 system-ui, sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        opacity: 0.7;
+      }
+      form.grid {
+        display: grid;
+        grid-template-columns: 1.4fr 0.6fr 1fr 0.7fr auto;
+        gap: 10px;
+        align-items: end;
+      }
+      @media (max-width: 720px) {
+        form.grid { grid-template-columns: 1fr 1fr; }
+        form.grid .span-all { grid-column: 1 / -1; }
+      }
+      label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
+      input[type="text"], input[type="color"] {
+        width: 100%;
+        border: 1px solid var(--border);
+        background: var(--input);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font: 500 14px/1.2 system-ui, sans-serif;
+      }
+      input[type="color"] { padding: 4px; height: 40px; cursor: pointer; }
+      .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+      button {
+        border: 0; border-radius: 8px; cursor: pointer;
+        font: 600 13px/1 system-ui, sans-serif;
+        padding: 11px 14px; color: #fff;
+        background: rgba(255, 255, 255, 0.1);
+      }
+      button.primary { background: var(--accent); }
+      button.danger { background: rgba(255, 59, 92, 0.25); color: #ff8da0; }
+      button:hover { filter: brightness(1.08); }
+      table { width: 100%; border-collapse: collapse; }
+      th, td {
+        text-align: left; padding: 10px 8px;
+        border-bottom: 1px solid var(--border);
+        vertical-align: middle;
+      }
+      th {
+        font: 600 11px/1 system-ui, sans-serif;
+        text-transform: uppercase; letter-spacing: 0.06em;
+        color: var(--muted);
+      }
+      td.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, monospace; font-size: 12px; }
+      .swatch {
+        display: inline-block; width: 14px; height: 14px;
+        border-radius: 50%; vertical-align: middle; margin-right: 8px;
+        box-shadow: 0 0 0 2px rgba(255,255,255,0.12);
+      }
+      .row-actions { display: flex; gap: 6px; }
+      #status {
+        min-height: 18px; margin-top: 10px;
+        font-size: 13px; color: var(--muted);
+      }
+      #status.ok { color: var(--ok); }
+      #status.err { color: #ff8da0; }
+      .empty { color: var(--muted); padding: 12px 0; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>Athlete Roster</h1>
+      <p class="sub">Bind MT909 IMEI (<code>device_id</code>) → bib / name / color. Save writes <code>roster.json</code> and hot-reloads the receiver.</p>
+
+      <div class="panel">
+        <h2>Add / Edit</h2>
+        <form id="form" class="grid" autocomplete="off">
+          <label class="span-all">
+            device_id (IMEI)
+            <input id="device_id" type="text" required placeholder="8638… or demo-1" />
+          </label>
+          <label>
+            bib
+            <input id="bib" type="text" placeholder="42" />
+          </label>
+          <label>
+            name
+            <input id="name" type="text" placeholder="张三" />
+          </label>
+          <label>
+            color
+            <input id="color" type="color" value="#ff3b5c" />
+          </label>
+          <div class="actions span-all">
+            <button type="submit" class="primary">Save entry</button>
+            <button type="button" id="btn-clear">Clear form</button>
+            <button type="button" id="btn-reload">Reload list</button>
+          </div>
+        </form>
+        <div id="status"></div>
+      </div>
+
+      <div class="panel">
+        <h2>Current roster</h2>
+        <div id="list-wrap">
+          <p class="empty">Loading…</p>
+        </div>
+      </div>
+    </div>
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const statusEl = $("status");
+
+      function setStatus(msg, kind) {
+        statusEl.textContent = msg || "";
+        statusEl.className = kind || "";
+      }
+
+      function fillForm(entry) {
+        $("device_id").value = entry?.device_id || "";
+        $("bib").value = entry?.bib || "";
+        $("name").value = entry?.name || "";
+        $("color").value = entry?.color || "#ff3b5c";
+      }
+
+      async function api(path, opts) {
+        const res = await fetch(path, {
+          headers: { "Content-Type": "application/json", ...(opts?.headers || {}) },
+          ...opts,
+        });
+        const text = await res.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+        if (!res.ok) {
+          const err = (data && data.error) || res.statusText || "request failed";
+          throw new Error(err);
+        }
+        return data;
+      }
+
+      function render(list) {
+        const wrap = $("list-wrap");
+        if (!list || !list.length) {
+          wrap.innerHTML = '<p class="empty">No athletes yet — add one above.</p>';
+          return;
+        }
+        wrap.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>device_id</th>
+                <th>bib</th>
+                <th>name</th>
+                <th>color</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${list.map((e) => `
+                <tr data-id="${encodeURIComponent(e.device_id)}">
+                  <td class="mono">${escapeHtml(e.device_id)}</td>
+                  <td>${escapeHtml(e.bib || "")}</td>
+                  <td>${escapeHtml(e.name || "")}</td>
+                  <td><span class="swatch" style="background:${escapeAttr(e.color || "#ff3b5c")}"></span>${escapeHtml(e.color || "")}</td>
+                  <td class="row-actions">
+                    <button type="button" data-act="edit">Edit</button>
+                    <button type="button" class="danger" data-act="del">Delete</button>
+                  </td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+        wrap.querySelectorAll("button[data-act]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const tr = btn.closest("tr");
+            const id = decodeURIComponent(tr.getAttribute("data-id"));
+            const entry = list.find((x) => x.device_id === id);
+            if (btn.getAttribute("data-act") === "edit") {
+              fillForm(entry);
+              setStatus(`Editing ${id}`, "");
+              return;
+            }
+            if (!confirm(`Delete ${id}?`)) return;
+            try {
+              const next = await api(`/api/roster/${encodeURIComponent(id)}`, { method: "DELETE" });
+              setStatus(`Deleted ${id}`, "ok");
+              render(next);
+            } catch (err) {
+              setStatus(String(err.message || err), "err");
+            }
+          });
+        });
+      }
+
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+      function escapeAttr(s) {
+        return escapeHtml(s).replace(/'/g, "&#39;");
+      }
+
+      async function reload() {
+        try {
+          const list = await api("/api/roster");
+          render(list);
+          setStatus(`Loaded ${list.length} entr${list.length === 1 ? "y" : "ies"}`, "ok");
+        } catch (err) {
+          setStatus(String(err.message || err), "err");
+        }
+      }
+
+      $("form").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const entry = {
+          device_id: $("device_id").value.trim(),
+          bib: $("bib").value.trim(),
+          name: $("name").value.trim(),
+          color: $("color").value,
+        };
+        if (!entry.device_id) {
+          setStatus("device_id is required", "err");
+          return;
+        }
+        try {
+          const next = await api("/api/roster", {
+            method: "POST",
+            body: JSON.stringify(entry),
+          });
+          setStatus(`Saved ${entry.device_id}`, "ok");
+          render(next);
+        } catch (err) {
+          setStatus(String(err.message || err), "err");
+        }
+      });
+
+      $("btn-clear").addEventListener("click", () => {
+        fillForm(null);
+        setStatus("", "");
+      });
+      $("btn-reload").addEventListener("click", reload);
+
+      reload();
+    </script>
+  </body>
+</html>
