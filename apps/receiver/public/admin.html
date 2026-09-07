@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Athlete Roster Admin</title>
+    <title>选手名册管理</title>
     <style>
       :root {
         --bg: #0b0f14;
@@ -19,12 +19,12 @@
       html, body {
         margin: 0; min-height: 100%;
         background: var(--bg); color: var(--text);
-        font: 14px/1.45 system-ui, sans-serif;
+        font: 14px/1.45 system-ui, "PingFang SC", "Noto Sans SC", sans-serif;
       }
       body { padding: 24px 16px 48px; }
       .wrap { max-width: 920px; margin: 0 auto; }
       h1 {
-        margin: 0 0 6px; font: 700 22px/1.2 system-ui, sans-serif;
+        margin: 0 0 6px; font: 700 22px/1.2 system-ui, "PingFang SC", sans-serif;
         letter-spacing: 0.02em;
       }
       .sub { color: var(--muted); margin-bottom: 20px; font-size: 13px; }
@@ -38,8 +38,7 @@
       }
       .panel h2 {
         margin: 0 0 12px;
-        font: 600 12px/1 system-ui, sans-serif;
-        text-transform: uppercase;
+        font: 600 12px/1 system-ui, "PingFang SC", sans-serif;
         letter-spacing: 0.08em;
         opacity: 0.7;
       }
@@ -61,13 +60,13 @@
         color: var(--text);
         border-radius: 8px;
         padding: 10px 12px;
-        font: 500 14px/1.2 system-ui, sans-serif;
+        font: 500 14px/1.2 system-ui, "PingFang SC", sans-serif;
       }
       input[type="color"] { padding: 4px; height: 40px; cursor: pointer; }
       .actions { display: flex; gap: 8px; flex-wrap: wrap; }
       button {
         border: 0; border-radius: 8px; cursor: pointer;
-        font: 600 13px/1 system-ui, sans-serif;
+        font: 600 13px/1 system-ui, "PingFang SC", sans-serif;
         padding: 11px 14px; color: #fff;
         background: rgba(255, 255, 255, 0.1);
       }
@@ -81,8 +80,8 @@
         vertical-align: middle;
       }
       th {
-        font: 600 11px/1 system-ui, sans-serif;
-        text-transform: uppercase; letter-spacing: 0.06em;
+        font: 600 11px/1 system-ui, "PingFang SC", sans-serif;
+        letter-spacing: 0.06em;
         color: var(--muted);
       }
       td.mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, monospace; font-size: 12px; }
@@ -103,41 +102,41 @@
   </head>
   <body>
     <div class="wrap">
-      <h1>Athlete Roster</h1>
-      <p class="sub">Bind MT909 IMEI (<code>device_id</code>) → bib / name / color. Save writes <code>roster.json</code> and hot-reloads the receiver.</p>
+      <h1>选手名册</h1>
+      <p class="sub">将 MT909 IMEI（<code>device_id</code>）绑定到 号码牌 / 姓名 / 颜色。保存后写入 <code>roster.json</code> 并热重载接收端。</p>
 
       <div class="panel">
-        <h2>Add / Edit</h2>
+        <h2>添加 / 编辑</h2>
         <form id="form" class="grid" autocomplete="off">
           <label class="span-all">
-            device_id (IMEI)
-            <input id="device_id" type="text" required placeholder="8638… or demo-1" />
+            设备号 (IMEI)
+            <input id="device_id" type="text" required placeholder="8638… 或 demo-1" />
           </label>
           <label>
-            bib
+            号码牌
             <input id="bib" type="text" placeholder="42" />
           </label>
           <label>
-            name
+            姓名
             <input id="name" type="text" placeholder="张三" />
           </label>
           <label>
-            color
+            颜色
             <input id="color" type="color" value="#ff3b5c" />
           </label>
           <div class="actions span-all">
-            <button type="submit" class="primary">Save entry</button>
-            <button type="button" id="btn-clear">Clear form</button>
-            <button type="button" id="btn-reload">Reload list</button>
+            <button type="submit" class="primary">保存</button>
+            <button type="button" id="btn-clear">清空表单</button>
+            <button type="button" id="btn-reload">刷新列表</button>
           </div>
         </form>
         <div id="status"></div>
       </div>
 
       <div class="panel">
-        <h2>Current roster</h2>
+        <h2>当前名册</h2>
         <div id="list-wrap">
-          <p class="empty">Loading…</p>
+          <p class="empty">加载中…</p>
         </div>
       </div>
     </div>
@@ -166,7 +165,7 @@
         let data = null;
         try { data = text ? JSON.parse(text) : null; } catch { data = text; }
         if (!res.ok) {
-          const err = (data && data.error) || res.statusText || "request failed";
+          const err = (data && data.error) || res.statusText || "请求失败";
           throw new Error(err);
         }
         return data;
@@ -175,17 +174,17 @@
       function render(list) {
         const wrap = $("list-wrap");
         if (!list || !list.length) {
-          wrap.innerHTML = '<p class="empty">No athletes yet — add one above.</p>';
+          wrap.innerHTML = '<p class="empty">暂无选手 — 请在上方添加。</p>';
           return;
         }
         wrap.innerHTML = `
           <table>
             <thead>
               <tr>
-                <th>device_id</th>
-                <th>bib</th>
-                <th>name</th>
-                <th>color</th>
+                <th>设备号 (IMEI)</th>
+                <th>号码牌</th>
+                <th>姓名</th>
+                <th>颜色</th>
                 <th></th>
               </tr>
             </thead>
@@ -197,8 +196,8 @@
                   <td>${escapeHtml(e.name || "")}</td>
                   <td><span class="swatch" style="background:${escapeAttr(e.color || "#ff3b5c")}"></span>${escapeHtml(e.color || "")}</td>
                   <td class="row-actions">
-                    <button type="button" data-act="edit">Edit</button>
-                    <button type="button" class="danger" data-act="del">Delete</button>
+                    <button type="button" data-act="edit">编辑</button>
+                    <button type="button" class="danger" data-act="del">删除</button>
                   </td>
                 </tr>
               `).join("")}
@@ -212,13 +211,13 @@
             const entry = list.find((x) => x.device_id === id);
             if (btn.getAttribute("data-act") === "edit") {
               fillForm(entry);
-              setStatus(`Editing ${id}`, "");
+              setStatus(`正在编辑 ${id}`, "");
               return;
             }
-            if (!confirm(`Delete ${id}?`)) return;
+            if (!confirm(`确定删除 ${id}？`)) return;
             try {
               const next = await api(`/api/roster/${encodeURIComponent(id)}`, { method: "DELETE" });
-              setStatus(`Deleted ${id}`, "ok");
+              setStatus(`已删除 ${id}`, "ok");
               render(next);
             } catch (err) {
               setStatus(String(err.message || err), "err");
@@ -242,7 +241,7 @@
         try {
           const list = await api("/api/roster");
           render(list);
-          setStatus(`Loaded ${list.length} entr${list.length === 1 ? "y" : "ies"}`, "ok");
+          setStatus(`已加载 ${list.length} 条`, "ok");
         } catch (err) {
           setStatus(String(err.message || err), "err");
         }
@@ -257,7 +256,7 @@
           color: $("color").value,
         };
         if (!entry.device_id) {
-          setStatus("device_id is required", "err");
+          setStatus("设备号 (IMEI) 为必填项", "err");
           return;
         }
         try {
@@ -265,7 +264,7 @@
             method: "POST",
             body: JSON.stringify(entry),
           });
-          setStatus(`Saved ${entry.device_id}`, "ok");
+          setStatus(`已保存 ${entry.device_id}`, "ok");
           render(next);
         } catch (err) {
           setStatus(String(err.message || err), "err");

@@ -1,6 +1,7 @@
 # Athlete roster admin
 
 Bind MT909 IMEI device_id to bib name color.
+Admin UI is Chinese-localized (设备号 / 号码牌 / 姓名 / 颜色).
 
 ## Open the UI
 
