@@ -17,6 +17,12 @@ export type Participant = {
   online: boolean;
   athlete: Telemetry;
   trail: TrailPoint[];
+  /** Along-course projection fields (from course-project). */
+  progress_m?: number;
+  progress_pct?: number;
+  dist_to_finish_m?: number;
+  off_course?: boolean;
+  lap?: number;
 };
 
 /** Multi-athlete live overlay payload (Phase 1). */

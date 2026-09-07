@@ -135,8 +135,18 @@ function renderList(participants: Participant[], selected: string | null) {
     a.bib.localeCompare(b.bib, undefined, { numeric: true })
   );
   listEl.innerHTML = "";
+  if (!sorted.length) {
+    const empty = document.createElement("div");
+    empty.className = "participant-item";
+    empty.style.cursor = "default";
+    empty.style.opacity = "0.55";
+    empty.textContent = "暂无选手";
+    listEl.appendChild(empty);
+    return;
+  }
   for (const p of sorted) {
-    const km = (p.athlete.distance / 1000).toFixed(2);
+    const meters = typeof p.progress_m === "number" ? p.progress_m : p.athlete.distance;
+    const km = (meters / 1000).toFixed(2);
     const li = document.createElement("button");
     li.type = "button";
     li.className = "participant-item" + (p.id === selected ? " active" : "");
@@ -173,7 +183,7 @@ function renderHud(p: Participant | null) {
 
 function render() {
   const state = latest;
-  eventNameEl.textContent = state.event?.name || "Live";
+  eventNameEl.textContent = state.event?.name || "直播";
   selectedId = resolveSelection(state);
   const participants = Object.values(state.participants);
   renderList(participants, selectedId);

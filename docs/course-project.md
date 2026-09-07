@@ -13,4 +13,4 @@ Ranking UI is **out of scope** for this package for now (sort by `progress_m` la
 
 ## Status
 
-Skeleton only: `haversineM` / `closestOnSegment` implemented; `buildCourseIndex` / `projectPoint` are stubs. Not wired into `apps/receiver` yet.
+`buildCourseIndex` / `projectToCourse` implemented; wired into `apps/receiver` (writes `progress_m` / `progress_pct` / `dist_to_finish_m` / `off_course` / `lap` onto each participant).

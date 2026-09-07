@@ -10,6 +10,11 @@ import {
 } from "./roster.ts";
 import type { OverlayState, Participant, TrailPoint, CourseFeature } from "./ws-server.ts";
 import type { Telemetry } from "../../../packages/schema/src/telemetry.ts";
+import {
+  buildCourseIndex,
+  projectToCourse,
+  type CourseIndex,
+} from "course-project";
 
 const demo = process.argv.includes("--demo");
 
@@ -36,8 +41,18 @@ const DEMO_COURSE: CourseFeature = {
   },
 };
 
+function pointsFromCourse(course: CourseFeature) {
+  return course.geometry.coordinates.map(([lng, lat]) => ({ lat, lng }));
+}
+
+/** Built once from the same demo course the overlay uses. */
+const courseIndex: CourseIndex = buildCourseIndex(pointsFromCourse(DEMO_COURSE));
+
+type ProjState = { sPrev: number; lap: number };
+const projByParticipant = new Map<string, ProjState>();
+
 const state: OverlayState = {
-  event: { name: demo ? "Demo Race" : "Live Tracking" },
+  event: { name: demo ? "演示赛" : "实时追踪" },
   course: demo ? DEMO_COURSE : null,
   participants: {},
 };
@@ -100,6 +115,37 @@ function colorForId(id: string): string {
   return palette[h % palette.length]!;
 }
 
+/** Project athlete GPS onto course; write progress_* onto participant. */
+function applyCourseProjection(p: Participant) {
+  const prev = projByParticipant.get(p.id) ?? { sPrev: 0, lap: 0 };
+  const q = { lat: p.athlete.lat, lng: p.athlete.lng };
+  let result = projectToCourse(courseIndex, q, {
+    sPrev: prev.sPrev,
+    lap: prev.lap,
+  });
+
+  // Finish-band lap wrap: near end, then near start → lap++
+  const total = courseIndex.totalM;
+  if (!result.offCourse && total > 0) {
+    const band = Math.min(100, total * 0.08);
+    if (prev.sPrev > total - band) {
+      const raw = projectToCourse(courseIndex, q, { lap: prev.lap });
+      if (!raw.offCourse && raw.s < band) {
+        result = { ...raw, lap: prev.lap + 1 };
+      }
+    }
+  }
+
+  projByParticipant.set(p.id, { sPrev: result.s, lap: result.lap });
+
+  const progress_m = result.s + result.lap * total;
+  p.progress_m = progress_m;
+  p.progress_pct = total > 0 ? Math.min(100, (result.s / total) * 100) : 0;
+  p.dist_to_finish_m = Math.max(0, total - result.s);
+  p.off_course = result.offCourse;
+  p.lap = result.lap;
+}
+
 function applyTelemetry(athlete: Telemetry) {
   const p = ensureParticipant(athlete);
   pushTrailPoint(p.trail, {
@@ -108,6 +154,7 @@ function applyTelemetry(athlete: Telemetry) {
     alt_baro: athlete.alt_baro,
     ts: athlete.ts,
   });
+  applyCourseProjection(p);
 }
 
 function emitState() {
@@ -137,6 +184,10 @@ function reapplyRosterToParticipants() {
 }
 
 setRosterReloadHandler(reapplyRosterToParticipants);
+
+console.log(
+  `[course] index ready totalM=${courseIndex.totalM.toFixed(1)} m points=${courseIndex.points.length}`
+);
 
 if (demo) {
   console.log("[demo] publishing ~1Hz fake telemetry for 3 athletes");
