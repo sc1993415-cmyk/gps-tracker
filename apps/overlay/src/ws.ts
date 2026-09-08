@@ -80,7 +80,7 @@ export function normalizeOverlayState(raw: unknown): OverlayState {
 }
 
 export function connectOverlayWs(
-  url = "ws://localhost:8787",
+  url = typeof location !== "undefined" ? `ws://${location.hostname}:8787` : "ws://localhost:8787",
   onState: (s: OverlayState) => void
 ) {
   let retry = 0;

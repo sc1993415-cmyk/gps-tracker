@@ -30,7 +30,7 @@ function parseParams() {
     mapOnly: truthy("mapOnly"),
     hideNonSelected: truthy("hideNonSelected"),
     listOpen: falsy("listOpen") ? false : true,
-    ws: q.get("ws") || "ws://localhost:8787",
+    ws: q.get("ws") || `ws://${location.hostname}:8787`,
   };
 }
 
@@ -124,7 +124,7 @@ function selectParticipant(id: string) {
     const v = (cur as Record<string, unknown>)[k];
     if (v === true) h.set(k, "true");
     else if (v === false && k === "listOpen") h.set(k, "false");
-    else if (typeof v === "string" && k === "ws" && v !== "ws://localhost:8787") h.set(k, v);
+    else if (typeof v === "string" && k === "ws" && v !== `ws://${location.hostname}:8787`) h.set(k, v);
   }
   history.replaceState(null, "", "#" + h.toString());
   render();
