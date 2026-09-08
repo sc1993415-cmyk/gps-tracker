@@ -1,0 +1,16 @@
+[Unit]
+Description=GPS Tracker MT909 Receiver
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/gps-tracker
+Environment=WS_PORT=8787
+Environment=MT909_TCP_PORT=5013
+Environment=ADMIN_PORT=8790
+ExecStart=/usr/bin/pnpm --filter receiver mt909
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
