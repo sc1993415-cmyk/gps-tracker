@@ -1,7 +1,7 @@
 import { createWsServer } from "./ws-server.ts";
 import { pushTrailPoint } from "./downsample.ts";
 import { startDemoPublisher, DEFAULT_ATHLETES } from "./demo-publisher.ts";
-import { startMt909TcpServer } from "./mt909-tcp.ts";
+import { startH02TcpServer } from "./h02-tcp.ts";
 import { startAdminServer } from "./admin-server.ts";
 import {
   loadRoster,
@@ -196,10 +196,13 @@ if (demo) {
     emitState();
   });
 } else {
-  const port = Number(process.env.MT909_TCP_PORT) || 5013;
-  console.log(`[mt909] starting TCP adapter (port ${port})`);
-  // Map each device_id/IMEI → one participant; update that participant only, then broadcast full state
-  startMt909TcpServer((t) => {
+  const port =
+    Number(process.env.H02_TCP_PORT) ||
+    Number(process.env.MT909_TCP_PORT) ||
+    5013;
+  console.log(`[mt909] starting H02 TCP adapter (port ${port})`);
+  // Real devices speak H02 ($ binary / * ASCII); device_id is Traccar-style id (not IMEI).
+  startH02TcpServer((t) => {
     applyTelemetry(t);
     emitState();
   }, port);

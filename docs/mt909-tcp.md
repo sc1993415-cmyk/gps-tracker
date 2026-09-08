@@ -1,7 +1,9 @@
-# MT909 TCP 接入
-- 设备：Mictrack MT909，开放 TCP（非 MQTT）
-- 默认端口：5013；短信 `IP <公网IP> 5013`
-- 启动：`pnpm --filter receiver mt909`
-- 帧：`#IMEI#...` + `$GPRMC...` + `##`；`V` 丢弃
-- 映射：IMEI→device_id；RMC→lat/lng/speed(/heading)；alt_baro/climb=0
-- 与 MQTT 无关：直接进同一套 WS 叠层
+# MT909 / H02 TCP
+
+## Protocol (Traccar VPS confirmed)
+- Real device: H02 binary marker 0x24 ($); also *HQ ASCII
+- Port 5013 H02; device_id 7026238813
+- Smoke lat~32.04726 lon~118.74223 course~139
+- Logs rawHex 16-32B on parse success/fail
+- * ASCII + Mictrack fallback; ACK *HQ,id,R12,HHmmss#
+- speed km/h = BCD raw * 1.852 (Traccar knots)

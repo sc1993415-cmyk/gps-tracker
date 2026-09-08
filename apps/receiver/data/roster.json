@@ -1,20 +1,7 @@
 [
-  {
-    "device_id": "demo-1",
-    "bib": "42",
-    "name": "Alice",
-    "color": "#ff3b5c"
-  },
-  {
-    "device_id": "demo-2",
-    "bib": "7",
-    "name": "Bob",
-    "color": "#00e5ff"
-  },
-  {
-    "device_id": "demo-3",
-    "bib": "21",
-    "name": "Chen",
-    "color": "#7cffb2"
-  }
+  {"device_id": "demo-1", "bib": "42", "name": "Alice", "color": "#ff3b5c"},
+  {"device_id": "demo-2", "bib": "7", "name": "Bob", "color": "#00e5ff"},
+  {"device_id": "demo-3", "bib": "21", "name": "Chen", "color": "#7cffb2"},
+  {"device_id": "7026238813", "bib": "1", "name": "MT909", "color": "#ff9800"},
+  {"device_id": "862667088119832", "bib": "1", "name": "MT909-IMEI", "color": "#ff9800"}
 ]
