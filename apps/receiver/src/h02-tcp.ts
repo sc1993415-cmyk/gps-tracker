@@ -144,6 +144,10 @@ export function decodeH02Binary(frame: Buffer): H02BinaryPosition | null {
   const ts = Date.UTC(2000 + year, month - 1, day, hour, minute, second);
   const speedKmh = Math.round(speedRaw * 1.852 * 10) / 10;
 
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return null;
+  }
+
   return {
     device_id,
     lat,
@@ -162,6 +166,8 @@ export function decodeH02Binary(frame: Buffer): H02BinaryPosition | null {
 export function h02PositionToTelemetry(pos: H02BinaryPosition): Telemetry | null {
   if (!pos.valid) return null;
   if (!Number.isFinite(pos.lat) || !Number.isFinite(pos.lng)) return null;
+  // Drop misframed ghosts (e.g. doubled `$` → lng ≈ -641).
+  if (pos.lat < -90 || pos.lat > 90 || pos.lng < -180 || pos.lng > 180) return null;
 
   const name = pos.device_id.length > 6 ? pos.device_id.slice(-6) : pos.device_id;
   const t: Telemetry = {
@@ -247,6 +253,8 @@ export function parseH02AsciiText(sentence: string): Telemetry | null {
   yy = yy >= 70 ? 1900 + yy : 2000 + yy;
   const ts = Date.UTC(yy, mo - 1, dd, hh, mm, ss);
 
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+
   const t: Telemetry = {
     device_id: id,
     lat,
@@ -324,6 +332,14 @@ export function startH02TcpServer(
         if (start > 0) buf = buf.subarray(start);
 
         if (kind === "dollar") {
+          // Collapse doubled `$` (0x24 0x24…) so ID bytes stay aligned.
+          // Mis-sync otherwise invents ids like 2470262388 (bib "2388").
+          while (buf.length >= 2 && buf[0] === 0x24 && buf[1] === 0x24) {
+            console.warn("[h02] skip doubled $ marker");
+            buf = buf.subarray(1);
+          }
+          if (buf.length === 0 || buf[0] !== 0x24) continue;
+
           const frameLen = detectH02FrameLength(buf, lockedFrameLen);
           if (frameLen == null) break;
           if (lockedFrameLen === 0) lockedFrameLen = frameLen;

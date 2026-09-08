@@ -6,7 +6,8 @@
   "scripts": {
     "demo": "tsx src/index.ts --demo",
     "start": "tsx src/index.ts",
-    "mt909": "tsx src/index.ts --mt909"
+    "mt909": "tsx src/index.ts --mt909",
+    "test:h02": "tsx src/h02-selftest.ts"
   },
   "dependencies": {
     "mqtt": "^5.10.3",

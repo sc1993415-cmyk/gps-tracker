@@ -5,6 +5,7 @@ import { startH02TcpServer } from "./h02-tcp.ts";
 import { startAdminServer } from "./admin-server.ts";
 import {
   loadRoster,
+  getRoster,
   getRosterEntry,
   setRosterReloadHandler,
 } from "./roster.ts";
@@ -203,6 +204,11 @@ if (demo) {
   console.log(`[mt909] starting H02 TCP adapter (port ${port})`);
   // Real devices speak H02 ($ binary / * ASCII); device_id is Traccar-style id (not IMEI).
   startH02TcpServer((t) => {
+    // When roster has entries, ignore unknown device_ids (blocks misframed ghosts).
+    if (getRoster().length > 0 && !getRosterEntry(t.device_id)) {
+      console.warn(`[mt909] ignore unknown device_id=${t.device_id}`);
+      return;
+    }
     applyTelemetry(t);
     emitState();
   }, port);
