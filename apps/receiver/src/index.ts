@@ -16,6 +16,7 @@ import {
   projectToCourse,
   type CourseIndex,
 } from "course-project";
+import { checkJump, type AcceptedFix } from "./jump-filter.ts";
 
 const demo = process.argv.includes("--demo");
 
@@ -60,6 +61,9 @@ const state: OverlayState = {
 
 /** device_id / IMEI → participant id (defaults to device_id). */
 const deviceToParticipant = new Map<string, string>();
+
+/** Last accepted fix per device (after jump filter). */
+const lastAcceptedFix = new Map<string, AcceptedFix>();
 
 const DEMO_COLORS = new Map(DEFAULT_ATHLETES.map((a) => [a.device_id, a.color]));
 
@@ -148,6 +152,28 @@ function applyCourseProjection(p: Participant) {
 }
 
 function applyTelemetry(athlete: Telemetry) {
+  const prev = lastAcceptedFix.get(athlete.device_id);
+  if (prev) {
+    const jump = checkJump(prev, {
+      lat: athlete.lat,
+      lng: athlete.lng,
+      ts: athlete.ts,
+    });
+    if (jump.reject) {
+      console.warn(
+        `[gps] reject jump id=${athlete.device_id} step_m=${jump.step_m.toFixed(1)} ` +
+          `dt=${jump.dt.toFixed(2)}s speed_ms=${jump.speed_ms.toFixed(1)} ` +
+          `(nail previous)`
+      );
+      return;
+    }
+  }
+  lastAcceptedFix.set(athlete.device_id, {
+    lat: athlete.lat,
+    lng: athlete.lng,
+    ts: athlete.ts,
+  });
+
   const p = ensureParticipant(athlete);
   pushTrailPoint(p.trail, {
     lat: athlete.lat,
