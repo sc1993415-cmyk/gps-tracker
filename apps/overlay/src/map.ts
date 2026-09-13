@@ -10,9 +10,29 @@ export type BasemapId = keyof typeof OPENFREEMAP_STYLES;
 
 const DEFAULT_STYLE_URL = OPENFREEMAP_STYLES.positron;
 
-/** Duration (ms) to lerp each athlete marker between WebSocket updates. */
-const MARKER_LERP_MS = 900;
+/** Fallback lerp when we have no recv-interval samples yet (~1Hz). */
+const DEFAULT_LERP_MS = 900;
 const LERP_EPSILON = 1e-7;
+/** Reconnect / sleep gaps larger than this do not enter the T estimate. */
+const MAX_INTERVAL_FOR_T_MS = 15_000;
+const INTERVAL_WINDOW = 10;
+const LERP_MIN_MS = 400;
+const LERP_MAX_MS = 8_000;
+const LERP_FACTOR = 0.85;
+
+function medianMs(samples: number[]): number {
+  if (!samples.length) return 1_000;
+  const s = [...samples].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 1 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+}
+
+/** clamp(0.85×T, 0.4s, 8s) from median recv interval T. */
+function lerpMsFromIntervals(samples: number[]): number {
+  const usable = samples.filter((x) => x > 0 && x <= MAX_INTERVAL_FOR_T_MS);
+  const T = usable.length ? medianMs(usable) : 1_000;
+  return Math.min(LERP_MAX_MS, Math.max(LERP_MIN_MS, LERP_FACTOR * T));
+}
 
 type MarkerRuntime = {
   marker: maplibregl.Marker;
@@ -24,6 +44,10 @@ type MarkerRuntime = {
   lerpFromLng: number;
   lerpFromLat: number;
   lerpStartMs: number;
+  /** Dynamic duration from recent recv intervals. */
+  lerpMs: number;
+  lastTargetUpdateMs: number;
+  intervalSamples: number[];
   rafId: number;
 };
 
@@ -142,6 +166,9 @@ export function createMap(
       lerpFromLng: 121.4737,
       lerpFromLat: 31.2304,
       lerpStartMs: 0,
+      lerpMs: DEFAULT_LERP_MS,
+      lastTargetUpdateMs: 0,
+      intervalSamples: [],
       rafId: 0,
     };
     markers.set(id, rt);
@@ -149,7 +176,8 @@ export function createMap(
   }
 
   function tickMarker(rt: MarkerRuntime, now: number) {
-    const t = Math.min(1, (now - rt.lerpStartMs) / MARKER_LERP_MS);
+    const dur = Math.max(1, rt.lerpMs || DEFAULT_LERP_MS);
+    const t = Math.min(1, (now - rt.lerpStartMs) / dur);
     const eased = 1 - (1 - t) ** 3;
     rt.displayLng = rt.lerpFromLng + (rt.targetLng - rt.lerpFromLng) * eased;
     rt.displayLat = rt.lerpFromLat + (rt.targetLat - rt.lerpFromLat) * eased;
@@ -232,9 +260,30 @@ export function createMap(
           flag.style.display = isSelected ? "block" : "none";
         }
 
+        // athlete.lat/lng already snapped on server when snap is on — lerp projected points.
         const ov = opts.positionOverrides?.[p.id];
-        rt.targetLng = ov ? ov.lng : p.athlete.lng;
-        rt.targetLat = ov ? ov.lat : p.athlete.lat;
+        const nextLng = ov ? ov.lng : p.athlete.lng;
+        const nextLat = ov ? ov.lat : p.athlete.lat;
+        const targetMoved =
+          Math.abs(nextLng - rt.targetLng) > LERP_EPSILON ||
+          Math.abs(nextLat - rt.targetLat) > LERP_EPSILON;
+        if (targetMoved) {
+          const now = performance.now();
+          if (rt.lastTargetUpdateMs > 0) {
+            const gap = now - rt.lastTargetUpdateMs;
+            // >15s = reconnect/sleep gap — skip for T estimate
+            if (gap > 0 && gap <= MAX_INTERVAL_FOR_T_MS) {
+              rt.intervalSamples.push(gap);
+              if (rt.intervalSamples.length > INTERVAL_WINDOW) {
+                rt.intervalSamples.shift();
+              }
+            }
+          }
+          rt.lastTargetUpdateMs = now;
+          rt.lerpMs = lerpMsFromIntervals(rt.intervalSamples);
+          rt.targetLng = nextLng;
+          rt.targetLat = nextLat;
+        }
         const dLng = Math.abs(rt.targetLng - rt.displayLng);
         const dLat = Math.abs(rt.targetLat - rt.displayLat);
         if (dLng > LERP_EPSILON || dLat > LERP_EPSILON) {
@@ -269,9 +318,10 @@ export function createMap(
         const sel = state.participants[selectedId];
         if (sel) {
           const ov = opts.positionOverrides?.[selectedId];
+          const selRt = markers.get(selectedId);
           map.easeTo({
             center: [ov ? ov.lng : sel.athlete.lng, ov ? ov.lat : sel.athlete.lat],
-            duration: MARKER_LERP_MS,
+            duration: selRt?.lerpMs ?? DEFAULT_LERP_MS,
           });
         }
       }
