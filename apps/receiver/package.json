@@ -9,7 +9,9 @@
     "mt909": "tsx src/index.ts --mt909",
     "test:h02": "tsx src/h02-selftest.ts",
     "test:jump": "tsx src/jump-filter-selftest.ts",
-    "test:cmd": "tsx src/device-sessions-selftest.ts"
+    "test:cmd": "tsx src/device-sessions-selftest.ts",
+    "test:battery": "tsx src/battery-selftest.ts",
+    "test:gpx": "tsx src/gpx-selftest.ts"
   },
   "dependencies": {
     "mqtt": "^5.10.3",

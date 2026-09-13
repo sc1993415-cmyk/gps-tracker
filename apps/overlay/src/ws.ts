@@ -12,6 +12,9 @@ export type Telemetry = {
   distance: number;
   climb: number;
   heading?: number;
+  battery_pct?: number;
+  battery?: number;
+  battery_bars?: number;
 };
 
 export type CourseFeature = {
@@ -41,6 +44,7 @@ export type OverlayState = {
   course?: CourseFeature | null;
   participants: Record<string, Participant>;
   mapStyle?: { id: string; url: string };
+  listColumns?: { id: string; enabled: boolean }[];
 };
 
 /** Legacy single-athlete shape — wrapped as one participant when received. */
@@ -56,6 +60,7 @@ export function normalizeOverlayState(raw: unknown): OverlayState {
       course: (o.course as OverlayState["course"]) ?? null,
       participants: o.participants as Record<string, Participant>,
       mapStyle: (o.mapStyle as OverlayState["mapStyle"]) ?? undefined,
+      listColumns: (o.listColumns as OverlayState["listColumns"]) ?? undefined,
     };
   }
 

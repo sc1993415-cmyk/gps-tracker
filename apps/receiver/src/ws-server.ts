@@ -32,6 +32,8 @@ export type OverlayState = {
   participants: Record<string, Participant>;
   /** OpenFreeMap style id + url for overlay basemap. */
   mapStyle?: { id: string; url: string };
+  /** Athlete list column visibility for overlay. */
+  listColumns?: { id: string; enabled: boolean }[];
 };
 
 /** Legacy single-athlete shape (kept for docs / shim reference). */

@@ -14,6 +14,16 @@ import {
   getMapStyle,
   setMapStyleReloadHandler,
 } from "./map-style.ts";
+import {
+  loadListColumns,
+  getListColumns,
+  setListColumnsReloadHandler,
+} from "./list-columns.ts";
+import {
+  loadPersistedCourse,
+  setCourseUploadHandler,
+  type GpxParseResult,
+} from "./gpx.ts";
 import type { OverlayState, Participant, TrailPoint, CourseFeature } from "./ws-server.ts";
 import type { Telemetry } from "../../../packages/schema/src/telemetry.ts";
 import {
@@ -52,8 +62,8 @@ function pointsFromCourse(course: CourseFeature) {
   return course.geometry.coordinates.map(([lng, lat]) => ({ lat, lng }));
 }
 
-/** Built once from the same demo course the overlay uses. */
-const courseIndex: CourseIndex = buildCourseIndex(pointsFromCourse(DEMO_COURSE));
+/** Mutable course index — rebuilt on GPX upload / persisted load. */
+let courseIndex: CourseIndex | null = null;
 
 type ProjState = { sPrev: number; lap: number };
 const projByParticipant = new Map<string, ProjState>();
@@ -63,6 +73,7 @@ const state: OverlayState = {
   course: demo ? DEMO_COURSE : null,
   participants: {},
   mapStyle: undefined,
+  listColumns: undefined,
 };
 
 /** device_id / IMEI → participant id (defaults to device_id). */
@@ -73,8 +84,55 @@ const lastAcceptedFix = new Map<string, AcceptedFix>();
 
 const DEMO_COLORS = new Map(DEFAULT_ATHLETES.map((a) => [a.device_id, a.color]));
 
+function rebuildCourseIndex(course: CourseFeature | null) {
+  if (!course || course.geometry.coordinates.length < 2) {
+    courseIndex = null;
+    projByParticipant.clear();
+    console.log("[course] index cleared (no course)");
+    return;
+  }
+  try {
+    courseIndex = buildCourseIndex(pointsFromCourse(course));
+    projByParticipant.clear();
+    console.log(
+      `[course] index ready totalM=${courseIndex.totalM.toFixed(1)} m points=${courseIndex.points.length}`
+    );
+  } catch (err) {
+    console.warn("[course] rebuild failed:", err);
+    courseIndex = null;
+    projByParticipant.clear();
+  }
+}
+
+function applyUploadedCourse(result: GpxParseResult & { paths: string[] }) {
+  state.course = result.feature;
+  rebuildCourseIndex(result.feature);
+  emitState();
+  console.log(
+    `[course] GPX applied points=${result.pointCount} totalM=${result.totalM.toFixed(1)} paths=${result.paths.length}`
+  );
+}
+
 loadRoster();
 loadMapStyle();
+loadListColumns();
+
+if (demo) {
+  rebuildCourseIndex(DEMO_COURSE);
+} else {
+  const persisted = loadPersistedCourse();
+  if (persisted) {
+    state.course = persisted;
+    rebuildCourseIndex(persisted);
+  } else {
+    // Keep a projection index from DEMO only as fallback geometry for progress math;
+    // state.course stays null so overlay does not paint the Shanghai demo loop.
+    rebuildCourseIndex(DEMO_COURSE);
+    console.log("[course] no persisted course.geojson — projection uses internal demo geometry only");
+  }
+}
+
+setCourseUploadHandler(applyUploadedCourse);
 startAdminServer(Number(process.env.ADMIN_PORT) || 8790);
 
 /** Merge roster bib/name/color onto an existing or new participant. */
@@ -129,6 +187,10 @@ function colorForId(id: string): string {
 
 /** Project athlete GPS onto course; write progress_* onto participant. */
 function applyCourseProjection(p: Participant) {
+  if (!courseIndex || courseIndex.points.length < 2) {
+    p.off_course = undefined;
+    return;
+  }
   const prev = projByParticipant.get(p.id) ?? { sPrev: 0, lap: 0 };
   const q = { lat: p.athlete.lat, lng: p.athlete.lng };
   let result = projectToCourse(courseIndex, q, {
@@ -193,11 +255,13 @@ function applyTelemetry(athlete: Telemetry) {
 
 function emitState() {
   state.mapStyle = getMapStyle();
+  state.listColumns = getListColumns().map(({ id, enabled }) => ({ id, enabled }));
   broadcast({
     event: state.event,
     course: state.course,
     participants: cloneParticipants(state.participants),
     mapStyle: state.mapStyle,
+    listColumns: state.listColumns,
   });
 }
 
@@ -220,10 +284,8 @@ function reapplyRosterToParticipants() {
 }
 
 setRosterReloadHandler(reapplyRosterToParticipants);
-
-console.log(
-  `[course] index ready totalM=${courseIndex.totalM.toFixed(1)} m points=${courseIndex.points.length}`
-);
+setMapStyleReloadHandler(() => emitState());
+setListColumnsReloadHandler(() => emitState());
 
 if (demo) {
   console.log("[demo] publishing ~1Hz fake telemetry for 3 athletes");

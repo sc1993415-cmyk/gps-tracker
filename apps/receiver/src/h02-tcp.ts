@@ -1,5 +1,6 @@
 import net from "node:net";
 import type { Telemetry } from "../../../packages/schema/src/telemetry.ts";
+import { decodeBatteryRaw } from "./battery.ts";
 import { parseMt909Frame } from "./mt909-tcp.ts";
 import {
   bindDeviceSocket,
@@ -188,6 +189,12 @@ export function h02PositionToTelemetry(pos: H02BinaryPosition): Telemetry | null
     distance: 0,
   };
   if (Number.isFinite(pos.course)) t.heading = pos.course;
+  const bat = decodeBatteryRaw(pos.batteryRaw);
+  if (bat.battery_pct != null) {
+    t.battery_pct = bat.battery_pct;
+    t.battery = bat.battery ?? bat.battery_pct;
+  }
+  if (bat.battery_bars != null) t.battery_bars = bat.battery_bars;
   return t;
 }
 

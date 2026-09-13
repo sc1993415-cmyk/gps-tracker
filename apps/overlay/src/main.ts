@@ -1,5 +1,6 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import { connectOverlayWs, type OverlayState, type Participant } from "./ws";
+
 import { createMap, OPENFREEMAP_STYLES } from "./map";
 import { loadCourse } from "./course";
 import type { CourseFeature } from "./ws";
@@ -139,7 +140,48 @@ function selectParticipant(id: string) {
   render();
 }
 
-function renderList(participants: Participant[], selected: string | null) {
+const DEFAULT_LIST_COLS: Record<string, boolean> = {
+  bib: true,
+  name: true,
+  progress: true,
+  speed: false,
+  battery: true,
+  online: true,
+  lastUpdate: false,
+  offCourse: false,
+};
+
+function enabledColumns(state: OverlayState): Record<string, boolean> {
+  const out = { ...DEFAULT_LIST_COLS };
+  const cols = state.listColumns;
+  if (Array.isArray(cols) && cols.length) {
+    for (const k of Object.keys(out)) out[k] = false;
+    for (const c of cols) {
+      if (c && typeof c.id === "string") out[c.id] = c.enabled !== false;
+    }
+  }
+  return out;
+}
+
+function formatLastUpdate(ts: number | undefined): string {
+  if (!ts || !Number.isFinite(ts)) return "—";
+  const d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return "—";
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
+function formatBattery(p: Participant): string {
+  const pct = p.athlete.battery_pct ?? p.athlete.battery;
+  if (typeof pct === "number" && Number.isFinite(pct)) return `${Math.round(pct)}%`;
+  if (typeof p.athlete.battery_bars === "number") return `${p.athlete.battery_bars}格`;
+  return "—";
+}
+
+function renderList(participants: Participant[], selected: string | null, state: OverlayState) {
+  const cols = enabledColumns(state);
   const sorted = [...participants].sort((a, b) =>
     a.bib.localeCompare(b.bib, undefined, { numeric: true })
   );
@@ -156,16 +198,28 @@ function renderList(participants: Participant[], selected: string | null) {
   for (const p of sorted) {
     const meters = typeof p.progress_m === "number" ? p.progress_m : p.athlete.distance;
     const km = (meters / 1000).toFixed(2);
+    const speed = Number.isFinite(p.athlete.speed) ? p.athlete.speed.toFixed(1) : "—";
+    const parts: string[] = [
+      `<span class="dot" style="background:${p.color || "#ff3b5c"}"></span>`,
+    ];
+    if (cols.bib) parts.push(`<span class="bib">${escapeHtml(p.bib || "—")}</span>`);
+    if (cols.name) parts.push(`<span class="name">${escapeHtml(shortName(p.name))}</span>`);
+    if (cols.progress) parts.push(`<span class="progress">${km} km</span>`);
+    if (cols.speed) parts.push(`<span class="speed">${speed}<small>km/h</small></span>`);
+    if (cols.battery) parts.push(`<span class="battery">${escapeHtml(formatBattery(p))}</span>`);
+    if (cols.lastUpdate) {
+      parts.push(`<span class="lastUpdate">${escapeHtml(formatLastUpdate(p.athlete.ts))}</span>`);
+    }
+    if (cols.offCourse && p.off_course) {
+      parts.push(`<span class="offCourse">偏航</span>`);
+    }
+    if (cols.online) {
+      parts.push(`<span class="online ${p.online ? "on" : "off"}" title="${p.online ? "在线" : "离线"}"></span>`);
+    }
     const li = document.createElement("button");
     li.type = "button";
     li.className = "participant-item" + (p.id === selected ? " active" : "");
-    li.innerHTML = `
-      <span class="dot" style="background:${p.color || "#ff3b5c"}"></span>
-      <span class="bib">${escapeHtml(p.bib || "—")}</span>
-      <span class="name">${escapeHtml(shortName(p.name))}</span>
-      <span class="progress">${km} km</span>
-      <span class="online ${p.online ? "on" : "off"}"></span>
-    `;
+    li.innerHTML = parts.join("\n      ");
     li.addEventListener("click", () => selectParticipant(p.id));
     listEl.appendChild(li);
   }
@@ -195,7 +249,7 @@ function render() {
   eventNameEl.textContent = state.event?.name || "直播";
   selectedId = resolveSelection(state);
   const participants = Object.values(state.participants);
-  renderList(participants, selectedId);
+  renderList(participants, selectedId, state);
   const sel = selectedId ? state.participants[selectedId] ?? null : null;
   renderHud(sel);
   const mapState = stylePinnedByHash
@@ -205,7 +259,8 @@ function render() {
     selectedId,
     follow: true,
     hideNonSelected: params.hideNonSelected,
-    courseOverride,
+    // Prefer live WS course (e.g. after admin GPX upload); fall back to /course.geojson.
+    courseOverride: state.course ?? courseOverride,
   });
 }
 

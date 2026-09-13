@@ -1,0 +1,46 @@
+{
+  "columns": {
+    "bib": true,
+    "name": true,
+    "progress": true,
+    "speed": false,
+    "battery": true,
+    "online": true,
+    "lastUpdate": false,
+    "offCourse": false
+  },
+  "listColumns": [
+    {
+      "id": "bib",
+      "enabled": true
+    },
+    {
+      "id": "name",
+      "enabled": true
+    },
+    {
+      "id": "progress",
+      "enabled": true
+    },
+    {
+      "id": "speed",
+      "enabled": false
+    },
+    {
+      "id": "battery",
+      "enabled": true
+    },
+    {
+      "id": "online",
+      "enabled": true
+    },
+    {
+      "id": "lastUpdate",
+      "enabled": false
+    },
+    {
+      "id": "offCourse",
+      "enabled": false
+    }
+  ]
+}

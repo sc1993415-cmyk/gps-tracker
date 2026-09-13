@@ -101,6 +101,34 @@
       #map-style-status { min-height: 18px; margin-top: 10px; font-size: 13px; color: var(--muted); }
       #cmd-status { min-height: 18px; margin-top: 10px; font-size: 13px; color: var(--muted); }
       .empty { color: var(--muted); padding: 12px 0; }
+
+      #list-columns-status, #gpx-status { min-height: 18px; margin-top: 10px; font-size: 13px; color: var(--muted); }
+      #list-columns-status.ok, #gpx-status.ok { color: var(--ok); }
+      #list-columns-status.err, #gpx-status.err { color: #ff8da0; }
+      .check-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 8px 12px;
+        margin-bottom: 12px;
+      }
+      .check-grid label {
+        flex-direction: row;
+        align-items: center;
+        gap: 8px;
+        color: var(--text);
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .check-grid input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+      input[type="file"] {
+        width: 100%;
+        border: 1px solid var(--border);
+        background: var(--input);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 10px 12px;
+        font: 500 13px/1.2 system-ui, "PingFang SC", sans-serif;
+      }
     </style>
   </head>
   <body>
@@ -196,6 +224,33 @@
         </form>
         <div id="cmd-status"></div>
         <pre id="cmd-preview" class="mono" style="margin:10px 0 0;padding:10px;background:var(--input);border-radius:8px;font-size:12px;color:var(--muted);"></pre>
+      </div>
+
+
+      <div class="panel">
+        <h2>选手列表列（叠层）</h2>
+        <p class="sub" style="margin-top:0">勾选叠层选手列表要显示的字段。默认：号码牌、姓名、进度、在线、电量。保存后经 WS 热更新。</p>
+        <div id="list-columns-checks" class="check-grid"></div>
+        <div class="actions">
+          <button type="button" class="primary" id="btn-list-columns-save">保存列配置</button>
+          <button type="button" id="btn-list-columns-reload">刷新</button>
+        </div>
+        <div id="list-columns-status"></div>
+      </div>
+
+      <div class="panel">
+        <h2>赛道 GPX 上传</h2>
+        <p class="sub" style="margin-top:0">上传 GPX（trkpt / rtept），自动简化相邻 &lt;8m 点并写入 overlay <code>public/course.geojson</code> 与 receiver <code>data/course.geojson</code>，接收端热重建 CourseIndex。</p>
+        <form id="gpx-form" class="grid" style="grid-template-columns: 1.6fr auto;" autocomplete="off">
+          <label>
+            GPX 文件
+            <input id="gpx_file" type="file" accept=".gpx,application/gpx+xml,text/xml,application/xml" />
+          </label>
+          <div class="actions">
+            <button type="submit" class="primary">上传赛道</button>
+          </div>
+        </form>
+        <div id="gpx-status"></div>
       </div>
 
       <div class="panel">
@@ -436,6 +491,82 @@
         }
       });
       loadMapStyle();
+
+      // --- list columns ---
+      const listColStatus = $("list-columns-status");
+      function setListColStatus(msg, kind) {
+        listColStatus.textContent = msg || "";
+        listColStatus.className = kind || "";
+      }
+      function renderListColumnChecks(columns) {
+        const wrap = $("list-columns-checks");
+        wrap.innerHTML = (columns || []).map((c) => `
+          <label>
+            <input type="checkbox" data-col="${escapeAttr(c.id)}" ${c.enabled ? "checked" : ""} />
+            ${escapeHtml(c.label || c.id)}
+          </label>
+        `).join("");
+      }
+      async function loadListColumns() {
+        try {
+          const data = await api("/api/list-columns");
+          renderListColumnChecks(data.columns || []);
+          const on = (data.columns || []).filter((c) => c.enabled).map((c) => c.id).join(", ");
+          setListColStatus("当前启用：" + (on || "无"));
+        } catch (err) {
+          setListColStatus(err.message || String(err), "err");
+        }
+      }
+      $("btn-list-columns-save").addEventListener("click", async () => {
+        try {
+          const columns = {};
+          $("list-columns-checks").querySelectorAll("input[data-col]").forEach((el) => {
+            columns[el.getAttribute("data-col")] = el.checked;
+          });
+          const data = await api("/api/list-columns", {
+            method: "PUT",
+            body: JSON.stringify({ columns }),
+          });
+          renderListColumnChecks(data.columns || []);
+          setListColStatus("已保存（叠层将热更新）", "ok");
+        } catch (err) {
+          setListColStatus(err.message || String(err), "err");
+        }
+      });
+      $("btn-list-columns-reload").addEventListener("click", loadListColumns);
+      loadListColumns();
+
+      // --- GPX upload ---
+      const gpxStatus = $("gpx-status");
+      function setGpxStatus(msg, kind) {
+        gpxStatus.textContent = msg || "";
+        gpxStatus.className = kind || "";
+      }
+      $("gpx-form").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const file = $("gpx_file").files && $("gpx_file").files[0];
+        if (!file) {
+          setGpxStatus("请选择 GPX 文件", "err");
+          return;
+        }
+        try {
+          setGpxStatus("上传中…");
+          const text = await file.text();
+          const res = await fetch("/api/course/gpx", {
+            method: "POST",
+            headers: { "Content-Type": "application/gpx+xml; charset=utf-8" },
+            body: text,
+          });
+          const raw = await res.text();
+          let data = null;
+          try { data = raw ? JSON.parse(raw) : null; } catch { data = raw; }
+          if (!res.ok) throw new Error((data && data.error) || res.statusText || "上传失败");
+          const km = (Number(data.totalM) / 1000).toFixed(2);
+          setGpxStatus(`已上传：${data.pointCount} 点，全长 ${data.totalM} m（${km} km），来源 ${data.source}`, "ok");
+        } catch (err) {
+          setGpxStatus(err.message || String(err), "err");
+        }
+      });
 
 </script>
   </body>
