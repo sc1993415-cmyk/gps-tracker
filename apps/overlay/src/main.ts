@@ -214,7 +214,12 @@ function renderList(participants: Participant[], selected: string | null, state:
       parts.push(`<span class="offCourse">偏航</span>`);
     }
     if (cols.online) {
-      parts.push(`<span class="online ${p.online ? "on" : "off"}" title="${p.online ? "在线" : "离线"}"></span>`);
+      const st = p.fix_status ?? (p.online ? "online_no_fix" : "offline");
+      const cls =
+        st === "fixing" ? "fixing" : st === "online_no_fix" ? "no-fix" : "off";
+      const title =
+        st === "fixing" ? "定位中" : st === "online_no_fix" ? "在线·无定位" : "离线";
+      parts.push(`<span class="online ${cls}" title="${title}"></span>`);
     }
     const li = document.createElement("button");
     li.type = "button";

@@ -210,6 +210,8 @@ export function createMap(
       const trailFeatures: GeoJSON.Feature[] = [];
 
       for (const p of participants) {
+        // Presence-only stubs (no valid fix yet) stay off the map.
+        if (!p.last_fix_ms) continue;
         seen.add(p.id);
         const color = p.color || "#ff3b5c";
         const isSelected = p.id === selectedId;

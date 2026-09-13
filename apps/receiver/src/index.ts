@@ -32,6 +32,15 @@ import {
   type CourseIndex,
 } from "course-project";
 import { checkJump, type AcceptedFix } from "./jump-filter.ts";
+import { isDeviceOnline } from "./device-sessions.ts";
+
+/** No packet / no TCP within this window → offline (covers ~5min standby heartbeat). */
+const ONLINE_TIMEOUT_MS = Number(process.env.GPS_ONLINE_TIMEOUT_MS) || 360_000;
+/** Recent valid=true within this window → fixing. */
+const FIX_FRESH_MS = Number(process.env.GPS_FIX_FRESH_MS) || 30_000;
+/** Throttle WS pushes when only presence/last_seen changes. */
+const PRESENCE_EMIT_MIN_MS = Number(process.env.GPS_PRESENCE_EMIT_MIN_MS) || 1000;
+let lastPresenceEmitMs = 0;
 
 const demo = process.argv.includes("--demo");
 
@@ -164,10 +173,11 @@ function ensureParticipant(t: Telemetry): Participant {
   } else {
     p.bib = t.bib || p.bib;
     p.name = t.name || p.name;
-    p.online = true;
     p.athlete = t;
   }
-  p.last_seen_ms = Date.now();
+  const now = Date.now();
+  p.last_seen_ms = now;
+  p.last_fix_ms = now;
 
   // Roster is source of truth for display fields when present.
   applyRosterFields(p, t.device_id);
@@ -176,6 +186,7 @@ function ensureParticipant(t: Telemetry): Participant {
   if (!p.name) p.name = t.device_id;
   if (!p.bib) p.bib = t.device_id.slice(-4);
 
+  refreshFixStatus(p, now);
   return p;
 }
 
@@ -184,6 +195,95 @@ function colorForId(id: string): string {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
   return palette[h % palette.length]!;
+}
+
+function allowDevice(deviceId: string): boolean {
+  if (getRoster().length === 0) return true;
+  return !!getRosterEntry(deviceId);
+}
+
+function refreshFixStatus(p: Participant, now = Date.now()) {
+  const deviceId = p.athlete.device_id;
+  const seen = p.last_seen_ms ?? 0;
+  const recentPacket = seen > 0 && now - seen <= ONLINE_TIMEOUT_MS;
+  const tcpUp = isDeviceOnline(deviceId);
+  const isOnline = recentPacket || tcpUp;
+  if (!isOnline) {
+    p.fix_status = "offline";
+    p.online = false;
+    return;
+  }
+  const fixAt = p.last_fix_ms ?? 0;
+  if (fixAt > 0 && now - fixAt <= FIX_FRESH_MS) {
+    p.fix_status = "fixing";
+    p.online = true;
+    return;
+  }
+  p.fix_status = "online_no_fix";
+  p.online = true;
+}
+
+function refreshAllFixStatuses(now = Date.now()) {
+  for (const p of Object.values(state.participants)) {
+    refreshFixStatus(p, now);
+  }
+}
+
+/** Create / update participant from any uplink without moving lat/lng. */
+function ensurePresenceParticipant(deviceId: string): Participant {
+  const id = deviceToParticipant.get(deviceId) ?? deviceId;
+  deviceToParticipant.set(deviceId, id);
+  let p = state.participants[id];
+  if (!p) {
+    const entry = getRosterEntry(deviceId);
+    p = {
+      id,
+      bib: entry?.bib || id.slice(-4),
+      name: entry?.name || id,
+      color: entry?.color || DEMO_COLORS.get(deviceId) || colorForId(id),
+      online: false,
+      fix_status: "offline",
+      athlete: {
+        device_id: deviceId,
+        lat: 0,
+        lng: 0,
+        speed: 0,
+        alt_baro: 0,
+        ts: Date.now(),
+        bib: entry?.bib || id.slice(-4),
+        name: entry?.name || id,
+        distance: 0,
+        climb: 0,
+      },
+      trail: [],
+    };
+    state.participants[id] = p;
+  }
+  applyRosterFields(p, deviceId);
+  return p;
+}
+
+function touchPresence(deviceId: string, opts: { zeroSpeed?: boolean; forceEmit?: boolean } = {}) {
+  if (!allowDevice(deviceId)) return;
+  const p = ensurePresenceParticipant(deviceId);
+  const now = Date.now();
+  p.last_seen_ms = now;
+  if (opts.zeroSpeed && p.athlete.speed !== 0) {
+    p.athlete = { ...p.athlete, speed: 0 };
+  }
+  refreshFixStatus(p, now);
+  const due = opts.forceEmit || now - lastPresenceEmitMs >= PRESENCE_EMIT_MIN_MS;
+  if (due) {
+    lastPresenceEmitMs = now;
+    emitState();
+  }
+}
+
+function seedRosterParticipants() {
+  for (const entry of getRoster()) {
+    ensurePresenceParticipant(entry.device_id);
+    refreshFixStatus(state.participants[entry.device_id]!);
+  }
 }
 
 /** Project athlete GPS onto course; write progress_* onto participant. */
@@ -237,16 +337,7 @@ function applyTelemetry(athlete: Telemetry) {
           `(nail previous)`
       );
       // Keep lat/lng nailed; clear HUD speed so stale km/h does not stick.
-      const id = deviceToParticipant.get(athlete.device_id) ?? athlete.device_id;
-      const p = state.participants[id];
-      if (p) {
-        p.online = true;
-        p.last_seen_ms = Date.now();
-        if (p.athlete.speed !== 0) {
-          p.athlete = { ...p.athlete, speed: 0 };
-        }
-        emitState();
-      }
+      touchPresence(athlete.device_id, { zeroSpeed: true, forceEmit: true });
       return;
     }
   }
@@ -268,6 +359,7 @@ function applyTelemetry(athlete: Telemetry) {
 }
 
 function emitState() {
+  refreshAllFixStatuses();
   state.mapStyle = getMapStyle();
   state.listColumns = getListColumns().map(({ id, enabled }) => ({ id, enabled }));
   broadcast({
@@ -289,6 +381,7 @@ function cloneParticipants(src: Record<string, Participant>): Record<string, Par
 
 /** After admin save: re-merge roster onto live participants and push WS. */
 function reapplyRosterToParticipants() {
+  seedRosterParticipants();
   for (const [deviceId, participantId] of deviceToParticipant) {
     const p = state.participants[participantId];
     if (!p) continue;
@@ -314,10 +407,14 @@ if (demo) {
     5013;
   console.log(`[mt909] starting H02 TCP adapter (port ${port})`);
   // Real devices speak H02 ($ binary / * ASCII); device_id is Traccar-style id (not IMEI).
+  seedRosterParticipants();
+  console.log(
+    `[presence] onlineTimeout=${ONLINE_TIMEOUT_MS}ms fixFresh=${FIX_FRESH_MS}ms`
+  );
+  emitState();
   startH02TcpServer(
     (t) => {
-      // When roster has entries, ignore unknown device_ids (blocks misframed ghosts).
-      if (getRoster().length > 0 && !getRosterEntry(t.device_id)) {
+      if (!allowDevice(t.device_id)) {
         console.warn(`[mt909] ignore unknown device_id=${t.device_id}`);
         return;
       }
@@ -327,22 +424,24 @@ if (demo) {
     port,
     {
       onInvalid: (deviceId) => {
-        if (getRoster().length > 0 && !getRosterEntry(deviceId)) return;
-        const id = deviceToParticipant.get(deviceId) ?? deviceId;
-        const p = state.participants[id];
-        if (!p) return;
-        p.online = true;
-        p.last_seen_ms = Date.now();
-        if (p.athlete.speed !== 0) {
-          p.athlete = { ...p.athlete, speed: 0 };
-          emitState();
-        } else {
-          // Still refresh last_seen without spamming WS every invalid tick.
-          // Throttle: emit at most ~1Hz for keepalive-only.
-        }
+        touchPresence(deviceId, { zeroSpeed: true });
+      },
+      onPresence: (deviceId) => {
+        touchPresence(deviceId);
       },
     }
   );
+  // Recompute online/fixing as timeouts elapse (no new packets).
+  setInterval(() => {
+    const before = JSON.stringify(
+      Object.values(state.participants).map((p) => [p.id, p.online, p.fix_status])
+    );
+    refreshAllFixStatuses();
+    const after = JSON.stringify(
+      Object.values(state.participants).map((p) => [p.id, p.online, p.fix_status])
+    );
+    if (before !== after) emitState();
+  }, 5000);
 }
 
 // mqtt.ts 可先留空占位

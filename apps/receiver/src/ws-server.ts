@@ -23,8 +23,12 @@ export type Participant = {
   dist_to_finish_m?: number;
   off_course?: boolean;
   lap?: number;
-  /** Server receive time (ms since epoch) for list last-update. */
+  /** Server receive time (ms since epoch) of any uplink (fix/heartbeat/invalid). */
   last_seen_ms?: number;
+  /** Server receive time of last accepted valid=true fix. */
+  last_fix_ms?: number;
+  /** Derived: fixing | online_no_fix | offline */
+  fix_status?: "fixing" | "online_no_fix" | "offline";
 };
 
 /** Multi-athlete live overlay payload (Phase 1). */

@@ -38,6 +38,8 @@ export type Participant = {
   off_course?: boolean;
   lap?: number;
   last_seen_ms?: number;
+  last_fix_ms?: number;
+  fix_status?: "fixing" | "online_no_fix" | "offline";
 };
 
 export type OverlayState = {

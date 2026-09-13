@@ -309,10 +309,16 @@ export function startH02TcpServer(
   port = Number(process.env.H02_TCP_PORT) ||
     Number(process.env.MT909_TCP_PORT) ||
     5013,
-  opts: { sendAck?: boolean; onInvalid?: (deviceId: string) => void } = {}
+  opts: {
+    sendAck?: boolean;
+    onInvalid?: (deviceId: string) => void;
+    /** Any non-position uplink (heartbeat / short keep-alive). */
+    onPresence?: (deviceId: string) => void;
+  } = {}
 ) {
   const sendAck = opts.sendAck !== false;
   const onInvalid = opts.onInvalid;
+  const onPresence = opts.onPresence;
 
   const server = net.createServer((socket) => {
     let buf = Buffer.alloc(0);
@@ -425,6 +431,7 @@ export function startH02TcpServer(
             if (m) {
               const id = m[1]!;
               bindId(id);
+              onPresence?.(id);
               if (sendAck) socket.write(sentence); // echo
               console.log(`[h02] * heartbeat id=${id}`);
               continue;
@@ -438,9 +445,14 @@ export function startH02TcpServer(
               onTelemetry(t);
               if (sendAck) socket.write(buildH02Ack(t.device_id));
             } else {
-              // Still ACK R12 for unknown * frames with an id
+              // Still ACK R12 for unknown * frames with an id; count as presence.
               const idMatch = sentence.match(/^\*[^,]+,([^,]+),/);
-              if (idMatch && sendAck) socket.write(buildH02Ack(idMatch[1]!));
+              if (idMatch) {
+                const id = idMatch[1]!;
+                bindId(id);
+                onPresence?.(id);
+                if (sendAck) socket.write(buildH02Ack(id));
+              }
             }
           } catch (err) {
             console.warn("[h02] ascii parse error", err);
