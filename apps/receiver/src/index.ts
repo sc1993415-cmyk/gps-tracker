@@ -330,11 +330,15 @@ function pruneParticipantsNotInRoster() {
   }
 }
 
-/** Project athlete GPS onto course; write progress_* onto participant. */
-function applyCourseProjection(p: Participant) {
-  if (!courseIndex || courseIndex.points.length < 2) {
+/** Project athlete GPS onto course; write progress_* onto participant.
+ * Returns on-course lat/lng when projection is usable (for trail drawing).
+ */
+function applyCourseProjection(
+  p: Participant
+): { lat: number; lng: number } | null {
+  if (!courseIndex || courseIndex.points.length < 2 || !state.course) {
     p.off_course = undefined;
-    return;
+    return null;
   }
   const prev = projByParticipant.get(p.id) ?? { sPrev: 0, lap: 0 };
   const q = { lat: p.athlete.lat, lng: p.athlete.lng };
@@ -363,6 +367,9 @@ function applyCourseProjection(p: Participant) {
   p.dist_to_finish_m = Math.max(0, total - result.s);
   p.off_course = result.offCourse;
   p.lap = result.lap;
+
+  if (result.offCourse || !result.proj) return null;
+  return { lat: result.proj.lat, lng: result.proj.lng };
 }
 
 function applyTelemetry(athlete: Telemetry) {
@@ -393,13 +400,16 @@ function applyTelemetry(athlete: Telemetry) {
   });
 
   const p = ensureParticipant(athlete);
+  const onCourse = applyCourseProjection(p);
+  // RaceMap-style: draw trail on GPX when available; marker still uses raw athlete lat/lng.
+  const trailMode = (process.env.GPS_TRAIL_MODE || "projected").toLowerCase();
+  const useProj = trailMode !== "raw" && onCourse;
   pushTrailPoint(p.trail, {
-    lat: athlete.lat,
-    lng: athlete.lng,
+    lat: useProj ? onCourse!.lat : athlete.lat,
+    lng: useProj ? onCourse!.lng : athlete.lng,
     alt_baro: athlete.alt_baro,
     ts: athlete.ts,
   });
-  applyCourseProjection(p);
 }
 
 function emitState() {
@@ -456,7 +466,7 @@ if (demo) {
   seedRosterParticipants();
   pruneParticipantsNotInRoster();
   console.log(
-    `[presence] onlineTimeout=${ONLINE_TIMEOUT_MS}ms fixFresh=${FIX_FRESH_MS}ms`
+    `[presence] onlineTimeout=${ONLINE_TIMEOUT_MS}ms fixFresh=${FIX_FRESH_MS}ms trailMode=${process.env.GPS_TRAIL_MODE || "projected"}`
   );
   emitState();
   startH02TcpServer(

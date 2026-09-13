@@ -1,0 +1,10 @@
+# Runtime / VPS-local data — never overwrite on deploy
+apps/receiver/data/roster.json
+apps/receiver/data/discovered.json
+apps/receiver/data/course.geojson
+apps/receiver/data/*.bak*
+apps/overlay/public/course.geojson
+node_modules/
+dist/
+.DS_Store
+*.log
