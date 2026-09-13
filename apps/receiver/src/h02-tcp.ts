@@ -1,6 +1,11 @@
 import net from "node:net";
 import type { Telemetry } from "../../../packages/schema/src/telemetry.ts";
 import { parseMt909Frame } from "./mt909-tcp.ts";
+import {
+  bindDeviceSocket,
+  unbindSocket,
+  noteDeviceReply,
+} from "./device-sessions.ts";
 
 export type TelemetryHandler = (t: Telemetry) => void;
 
@@ -304,8 +309,16 @@ export function startH02TcpServer(
   const server = net.createServer((socket) => {
     let buf = Buffer.alloc(0);
     let lockedFrameLen = 0;
+    let boundId: string | null = null;
     const remote = `${socket.remoteAddress}:${socket.remotePort}`;
     console.log(`[h02] connect ${remote}`);
+
+    const bindId = (id: string) => {
+      if (!id || boundId === id) return;
+      boundId = id;
+      bindDeviceSocket(id, socket);
+      console.log(`[h02] bind id=${id} ${remote}`);
+    };
 
     socket.on("data", (chunk: Buffer) => {
       buf = Buffer.concat([buf, chunk]);
@@ -323,13 +336,28 @@ export function startH02TcpServer(
         if (dollar >= 0) candidates.push({ i: dollar, k: "dollar" });
         if (hash >= 0) candidates.push({ i: hash, k: "hash" });
         if (candidates.length === 0) {
+          // Plain SMS-style replies: OK / SET OK. / system reset ok!
+          const plain = buf.toString("utf8");
+          if (/^[\x09\x0a\x0d\x20-\x7e]+$/.test(plain)) {
+            noteDeviceReply(boundId, plain);
+          } else {
+            console.warn(
+              `[h02] drop ${buf.length}B noise (no marker) hex=${buf.subarray(0, Math.min(24, buf.length)).toString("hex")}`
+            );
+          }
           buf = Buffer.alloc(0);
           break;
         }
         candidates.sort((a, b) => a.i - b.i);
         start = candidates[0]!.i;
         kind = candidates[0]!.k;
-        if (start > 0) buf = buf.subarray(start);
+        if (start > 0) {
+          const prefix = buf.subarray(0, start).toString("utf8");
+          if (/^[\x09\x0a\x0d\x20-\x7e]+$/.test(prefix) && prefix.trim()) {
+            noteDeviceReply(boundId, prefix);
+          }
+          buf = buf.subarray(start);
+        }
 
         if (kind === "dollar") {
           // Collapse doubled `$` (0x24 0x24…) so ID bytes stay aligned.
@@ -362,6 +390,7 @@ export function startH02TcpServer(
                 `course=${pos.course} speedRaw=${pos.speedRaw} kmh=${pos.speedKmh} valid=${pos.valid} ` +
                 `ts=${new Date(pos.ts).toISOString()} rawHex=${rawHex}`
             );
+            bindId(pos.device_id);
             const t = h02PositionToTelemetry(pos);
             if (t) onTelemetry(t);
             if (sendAck) socket.write(buildH02Ack(pos.device_id));
@@ -386,6 +415,7 @@ export function startH02TcpServer(
             const m = sentence.match(/^\*[^,]+,([^,]+),(V0|HTBT)\b/i);
             if (m) {
               const id = m[1]!;
+              bindId(id);
               if (sendAck) socket.write(sentence); // echo
               console.log(`[h02] * heartbeat id=${id}`);
               continue;
@@ -395,6 +425,7 @@ export function startH02TcpServer(
               console.log(
                 `[h02] * ascii id=${t.device_id} lat=${t.lat.toFixed(5)} lng=${t.lng.toFixed(5)}`
               );
+              bindId(t.device_id);
               onTelemetry(t);
               if (sendAck) socket.write(buildH02Ack(t.device_id));
             } else {
@@ -429,6 +460,7 @@ export function startH02TcpServer(
               console.log(
                 `[h02] mictrack-fallback id=${t.device_id} lat=${t.lat.toFixed(5)} lng=${t.lng.toFixed(5)}`
               );
+              bindId(t.device_id);
               onTelemetry(t);
             }
           } catch (err) {
@@ -447,7 +479,8 @@ export function startH02TcpServer(
       console.warn(`[h02] socket error ${remote}`, err.message);
     });
     socket.on("close", () => {
-      console.log(`[h02] close ${remote}`);
+      unbindSocket(socket);
+      console.log(`[h02] close ${remote} id=${boundId || "-"}`);
     });
   });
 

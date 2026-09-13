@@ -95,8 +95,9 @@
         min-height: 18px; margin-top: 10px;
         font-size: 13px; color: var(--muted);
       }
-      #status.ok { color: var(--ok); }
-      #status.err { color: #ff8da0; }
+      #status.ok, #cmd-status.ok { color: var(--ok); }
+      #status.err, #cmd-status.err { color: #ff8da0; }
+      #cmd-status { min-height: 18px; margin-top: 10px; font-size: 13px; color: var(--muted); }
       .empty { color: var(--muted); padding: 12px 0; }
     </style>
   </head>
@@ -131,6 +132,49 @@
           </div>
         </form>
         <div id="status"></div>
+      </div>
+
+
+      <div class="panel">
+        <h2>设备指令下发（MT909 官方短信原文 → TCP）</h2>
+        <p class="sub" style="margin-top:0">在线设备走 5013 长连接原样下发；离线则排队，重连后自动 flush。回执看 receiver 日志 <code>[cmd] reply</code>。</p>
+        <form id="cmd-form" class="grid" style="grid-template-columns: 1.2fr 0.7fr 0.7fr 0.9fr 0.6fr auto;" autocomplete="off">
+          <label>
+            设备号
+            <input id="cmd_device_id" type="text" required placeholder="7026238813" />
+          </label>
+          <label>
+            指令
+            <select id="cmd_kind" style="width:100%;border:1px solid var(--border);background:var(--input);color:var(--text);border-radius:8px;padding:10px 12px;font:500 14px/1.2 system-ui,sans-serif;">
+              <option value="freq">FREQ 改间隔</option>
+              <option value="ip">IP 改服务器</option>
+              <option value="cq">CQ 重启</option>
+            </select>
+          </label>
+          <label id="wrap_pwd">
+            密码
+            <input id="cmd_password" type="text" value="123456" />
+          </label>
+          <label id="wrap_interval">
+            间隔(秒)
+            <input id="cmd_interval" type="text" value="30" placeholder="10–3599" />
+          </label>
+          <label id="wrap_host" style="display:none">
+            服务器 IP
+            <input id="cmd_host" type="text" value="114.55.99.34" />
+          </label>
+          <label id="wrap_port" style="display:none">
+            端口
+            <input id="cmd_port" type="text" value="5013" />
+          </label>
+          <div class="actions span-all">
+            <button type="submit" class="primary">下发</button>
+            <button type="button" id="btn-online">刷新在线</button>
+            <span id="online-status" class="sub" style="margin:0;align-self:center;"></span>
+          </div>
+        </form>
+        <div id="cmd-status"></div>
+        <pre id="cmd-preview" class="mono" style="margin:10px 0 0;padding:10px;background:var(--input);border-radius:8px;font-size:12px;color:var(--muted);"></pre>
       </div>
 
       <div class="panel">
@@ -278,6 +322,68 @@
       $("btn-reload").addEventListener("click", reload);
 
       reload();
-    </script>
+    
+      // --- MT909 command downlink ---
+      const cmdStatus = $("cmd-status");
+      function setCmdStatus(msg, kind) {
+        cmdStatus.textContent = msg || "";
+        cmdStatus.className = kind || "";
+      }
+      function syncCmdFields() {
+        const kind = $("cmd_kind").value;
+        $("wrap_pwd").style.display = kind === "freq" ? "" : "none";
+        $("wrap_interval").style.display = kind === "freq" ? "" : "none";
+        $("wrap_host").style.display = kind === "ip" ? "" : "none";
+        $("wrap_port").style.display = kind === "ip" ? "" : "none";
+        let preview = "";
+        if (kind === "freq") preview = `FREQ,${$("cmd_password").value || "123456"},${$("cmd_interval").value || "30"}`;
+        else if (kind === "ip") preview = `IP ${$("cmd_host").value || "…"} ${$("cmd_port").value || "5013"}`;
+        else preview = "CQ";
+        $("cmd-preview").textContent = "将发送： " + preview;
+      }
+      $("cmd_kind").addEventListener("change", syncCmdFields);
+      ["cmd_password","cmd_interval","cmd_host","cmd_port"].forEach((id) => {
+        $(id).addEventListener("input", syncCmdFields);
+      });
+      syncCmdFields();
+
+      async function refreshOnline() {
+        try {
+          const data = await api("/api/devices/online");
+          const list = data.online || [];
+          $("online-status").textContent = list.length
+            ? ("在线: " + list.join(", "))
+            : "当前无在线设备";
+          if (list.length && !$("cmd_device_id").value) $("cmd_device_id").value = list[0];
+        } catch (err) {
+          $("online-status").textContent = "在线查询失败: " + err.message;
+        }
+      }
+      $("btn-online").addEventListener("click", refreshOnline);
+      refreshOnline();
+
+      $("cmd-form").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        const kind = $("cmd_kind").value;
+        const body = { device_id: $("cmd_device_id").value.trim(), cmd: kind };
+        if (kind === "freq") {
+          body.password = $("cmd_password").value.trim() || "123456";
+          body.interval = Number($("cmd_interval").value);
+        } else if (kind === "ip") {
+          body.host = $("cmd_host").value.trim();
+          body.port = Number($("cmd_port").value);
+        }
+        try {
+          setCmdStatus("下发中…");
+          const data = await api("/api/command", { method: "POST", body: JSON.stringify(body) });
+          const q = data.queued ? "（已排队，等设备上线）" : "（已写入 TCP）";
+          setCmdStatus(`已下发 ${data.command} ${q}`, "ok");
+          refreshOnline();
+        } catch (err) {
+          setCmdStatus(err.message || String(err), "err");
+        }
+      });
+
+</script>
   </body>
 </html>

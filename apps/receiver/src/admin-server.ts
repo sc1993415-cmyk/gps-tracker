@@ -8,6 +8,13 @@ import {
   upsertRoster,
   deleteRosterEntry,
 } from "./roster.ts";
+import {
+  buildMt909Command,
+  sendRawCommand,
+  listOnlineDevices,
+  isDeviceOnline,
+  type Mt909CmdKind,
+} from "./device-sessions.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ADMIN_HTML = path.resolve(__dirname, "../public/admin.html");
@@ -109,6 +116,57 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
         return;
       }
 
+      if (url.pathname === "/api/devices/online" && method === "GET") {
+        sendJson(res, 200, { online: listOnlineDevices() });
+        return;
+      }
+
+      if (url.pathname === "/api/command" && method === "POST") {
+        const raw = await readBody(req);
+        const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        const deviceId = String(body.device_id ?? "").trim();
+        const cmd = String(body.cmd ?? "").trim().toLowerCase() as Mt909CmdKind;
+        if (!deviceId) {
+          sendJson(res, 400, { error: "device_id required" });
+          return;
+        }
+        if (cmd !== "freq" && cmd !== "ip" && cmd !== "cq") {
+          sendJson(res, 400, { error: "cmd must be freq | ip | cq" });
+          return;
+        }
+        let commandText: string;
+        try {
+          commandText = buildMt909Command(cmd, {
+            password: body.password != null ? String(body.password) : undefined,
+            intervalSec:
+              body.interval != null
+                ? Number(body.interval)
+                : body.intervalSec != null
+                  ? Number(body.intervalSec)
+                  : undefined,
+            host: body.host != null ? String(body.host) : body.ip != null ? String(body.ip) : undefined,
+            port: body.port != null ? Number(body.port) : undefined,
+          });
+        } catch (err) {
+          sendJson(res, 400, { error: err instanceof Error ? err.message : String(err) });
+          return;
+        }
+        const result = sendRawCommand(deviceId, commandText);
+        if (!result.ok) {
+          sendJson(res, 400, { error: result.error, command: commandText });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          device_id: deviceId,
+          cmd,
+          command: commandText,
+          online: isDeviceOnline(deviceId),
+          queued: result.queued,
+        });
+        return;
+      }
+
       sendJson(res, 404, { error: "not found" });
     } catch (err) {
       console.warn("[admin]", err);
@@ -117,7 +175,7 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
   });
 
   server.listen(port, () => {
-    console.log(`[admin] roster UI http://localhost:${port}/  (API /api/roster)`);
+    console.log(`[admin] roster UI http://localhost:${port}/  (API /api/roster /api/command)`);
   });
   server.on("error", (err) => {
     console.error("[admin] server error", err);
