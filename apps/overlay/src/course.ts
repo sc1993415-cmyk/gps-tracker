@@ -1,6 +1,6 @@
 import type { CourseFeature } from "./ws";
 
-/** Inline fallback when /course.geojson is missing. */
+/** Local demo loop only — do not auto-load in production. */
 export const DEMO_COURSE: CourseFeature = {
   type: "Feature",
   properties: { name: "demo-loop" },
@@ -24,7 +24,7 @@ export const DEMO_COURSE: CourseFeature = {
 export async function loadCourse(): Promise<CourseFeature | null> {
   try {
     const res = await fetch("/course.geojson", { cache: "no-store" });
-    if (!res.ok) return DEMO_COURSE;
+    if (!res.ok) return null;
     const json = await res.json();
     if (json?.type === "Feature" && json?.geometry?.type === "LineString") {
       return json as CourseFeature;
@@ -35,8 +35,8 @@ export async function loadCourse(): Promise<CourseFeature | null> {
       );
       if (line) return line as CourseFeature;
     }
-    return DEMO_COURSE;
+    return null;
   } catch {
-    return DEMO_COURSE;
+    return null;
   }
 }

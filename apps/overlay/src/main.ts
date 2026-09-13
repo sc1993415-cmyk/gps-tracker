@@ -1,7 +1,7 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import { connectOverlayWs, type OverlayState, type Participant } from "./ws";
 import { createMap, OPENFREEMAP_STYLES } from "./map";
-import { loadCourse, DEMO_COURSE } from "./course";
+import { loadCourse } from "./course";
 import type { CourseFeature } from "./ws";
 
 /** RaceMap-style hash params: #selected=…&mapOnly=true (also accepts ?query for compat). */
@@ -61,7 +61,7 @@ const climbEl = document.querySelector("#climb")!;
 
 let selectedId: string | null = null;
 let latest: OverlayState = { participants: {} };
-let courseOverride: CourseFeature | null = DEMO_COURSE;
+let courseOverride: CourseFeature | null = null;
 let userPicked = false;
 
 if (!params.listOpen) {
