@@ -235,6 +235,17 @@ function applyTelemetry(athlete: Telemetry) {
           `dt=${jump.dt.toFixed(2)}s speed_ms=${jump.speed_ms.toFixed(1)} ` +
           `(nail previous)`
       );
+      // Keep lat/lng nailed; clear HUD speed so stale km/h does not stick.
+      const id = deviceToParticipant.get(athlete.device_id) ?? athlete.device_id;
+      const p = state.participants[id];
+      if (p) {
+        p.online = true;
+        p.last_seen_ms = Date.now();
+        if (p.athlete.speed !== 0) {
+          p.athlete = { ...p.athlete, speed: 0 };
+        }
+        emitState();
+      }
       return;
     }
   }
@@ -301,15 +312,35 @@ if (demo) {
     5013;
   console.log(`[mt909] starting H02 TCP adapter (port ${port})`);
   // Real devices speak H02 ($ binary / * ASCII); device_id is Traccar-style id (not IMEI).
-  startH02TcpServer((t) => {
-    // When roster has entries, ignore unknown device_ids (blocks misframed ghosts).
-    if (getRoster().length > 0 && !getRosterEntry(t.device_id)) {
-      console.warn(`[mt909] ignore unknown device_id=${t.device_id}`);
-      return;
+  startH02TcpServer(
+    (t) => {
+      // When roster has entries, ignore unknown device_ids (blocks misframed ghosts).
+      if (getRoster().length > 0 && !getRosterEntry(t.device_id)) {
+        console.warn(`[mt909] ignore unknown device_id=${t.device_id}`);
+        return;
+      }
+      applyTelemetry(t);
+      emitState();
+    },
+    port,
+    {
+      onInvalid: (deviceId) => {
+        if (getRoster().length > 0 && !getRosterEntry(deviceId)) return;
+        const id = deviceToParticipant.get(deviceId) ?? deviceId;
+        const p = state.participants[id];
+        if (!p) return;
+        p.online = true;
+        p.last_seen_ms = Date.now();
+        if (p.athlete.speed !== 0) {
+          p.athlete = { ...p.athlete, speed: 0 };
+          emitState();
+        } else {
+          // Still refresh last_seen without spamming WS every invalid tick.
+          // Throttle: emit at most ~1Hz for keepalive-only.
+        }
+      },
     }
-    applyTelemetry(t);
-    emitState();
-  }, port);
+  );
 }
 
 // mqtt.ts 可先留空占位

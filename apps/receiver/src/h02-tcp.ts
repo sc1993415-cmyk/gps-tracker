@@ -309,9 +309,10 @@ export function startH02TcpServer(
   port = Number(process.env.H02_TCP_PORT) ||
     Number(process.env.MT909_TCP_PORT) ||
     5013,
-  opts: { sendAck?: boolean } = {}
+  opts: { sendAck?: boolean; onInvalid?: (deviceId: string) => void } = {}
 ) {
   const sendAck = opts.sendAck !== false;
+  const onInvalid = opts.onInvalid;
 
   const server = net.createServer((socket) => {
     let buf = Buffer.alloc(0);
@@ -400,6 +401,7 @@ export function startH02TcpServer(
             bindId(pos.device_id);
             const t = h02PositionToTelemetry(pos);
             if (t) onTelemetry(t);
+            else if (!pos.valid) onInvalid?.(pos.device_id);
             if (sendAck) socket.write(buildH02Ack(pos.device_id));
           } catch (err) {
             console.warn(`[h02] binary parse error rawHex=${rawHex}`, err);
