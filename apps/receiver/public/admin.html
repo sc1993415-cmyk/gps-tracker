@@ -264,6 +264,20 @@
         <div id="list-columns-status"></div>
       </div>
 
+
+      <div class="panel">
+        <h2>赛道吸附</h2>
+        <p class="sub" style="margin-top:0">默认开启：距 GPX 约 100m 内 marker 与轨迹贴红线；偏航超过阈值跟原始 GPS。关则始终跟真机坐标。</p>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="snap_enabled" checked />
+          启用赛道吸附
+        </label>
+        <div class="actions" style="margin-top:10px">
+          <button type="button" class="primary" id="btn-snap-save">保存</button>
+        </div>
+        <div id="snap-status" class="sub" style="margin-top:8px"></div>
+      </div>
+
       <div class="panel">
         <h2>赛道 GPX 上传</h2>
         <p class="sub" style="margin-top:0">上传 GPX（trkpt / rtept），自动简化相邻 &lt;8m 点并写入 overlay <code>public/course.geojson</code> 与 receiver <code>data/course.geojson</code>，接收端热重建 CourseIndex。</p>
@@ -763,6 +777,42 @@
       });
       $("btn-session-reload")?.addEventListener("click", () => loadSession());
       loadSession();
+
+      // --- course snap ---
+      async function loadSnap() {
+        try {
+          const s = await api("/api/snap");
+          if ($("snap_enabled")) $("snap_enabled").checked = s.enabled !== false;
+          const el = $("snap-status");
+          if (el) {
+            el.textContent = s.enabled ? ("吸附开 · 阈值 " + (s.maxMapM || 100) + " m") : "吸附关 · 跟原始 GPS";
+            el.className = "ok";
+          }
+        } catch (err) {
+          const el = $("snap-status");
+          if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+        }
+      }
+      if ($("btn-snap-save")) {
+        $("btn-snap-save").addEventListener("click", async () => {
+          try {
+            const s = await api("/api/snap", {
+              method: "PUT",
+              body: JSON.stringify({ enabled: !!$("snap_enabled").checked }),
+            });
+            const el = $("snap-status");
+            if (el) {
+              el.textContent = s.enabled ? "已保存：吸附开" : "已保存：吸附关";
+              el.className = "ok";
+            }
+          } catch (err) {
+            const el = $("snap-status");
+            if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+          }
+        });
+      }
+      loadSnap();
+
 
 
       loadListColumns();

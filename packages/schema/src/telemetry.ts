@@ -17,4 +17,7 @@ export type Telemetry = {
   battery?: number;
   /** Bar count 1–6 when device reports 0xF1–0xF6. */
   battery_bars?: number;
+  /** Raw GPS before course snap (WGS84). */
+  raw_lat?: number;
+  raw_lng?: number;
 };

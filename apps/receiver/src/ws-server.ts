@@ -51,6 +51,8 @@ export type OverlayState = {
   listColumns?: { id: string; enabled: boolean }[];
   /** Live session: start/end/reset recording for playback. */
   session?: SessionInfo;
+  /** Course snap: marker+trail use projected point when within maxMapM. */
+  snap?: { enabled: boolean; maxMapM: number };
 };
 
 /** Legacy single-athlete shape (kept for docs / shim reference). */

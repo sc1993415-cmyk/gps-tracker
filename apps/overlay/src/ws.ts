@@ -15,6 +15,8 @@ export type Telemetry = {
   battery_pct?: number;
   battery?: number;
   battery_bars?: number;
+  raw_lat?: number;
+  raw_lng?: number;
 };
 
 export type CourseFeature = {
@@ -58,6 +60,8 @@ export type OverlayState = {
   mapStyle?: { id: string; url: string };
   listColumns?: { id: string; enabled: boolean }[];
   session?: SessionInfo;
+  /** Course snap: marker+trail use projected point when within maxMapM. */
+  snap?: { enabled: boolean; maxMapM: number };
 };
 
 /** Legacy single-athlete shape — wrapped as one participant when received. */
@@ -75,6 +79,7 @@ export function normalizeOverlayState(raw: unknown): OverlayState {
       mapStyle: (o.mapStyle as OverlayState["mapStyle"]) ?? undefined,
       listColumns: (o.listColumns as OverlayState["listColumns"]) ?? undefined,
       session: (o.session as OverlayState["session"]) ?? undefined,
+      snap: (o.snap as OverlayState["snap"]) ?? undefined,
     };
   }
 

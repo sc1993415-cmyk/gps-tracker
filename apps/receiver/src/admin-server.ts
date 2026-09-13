@@ -40,6 +40,7 @@ import {
   endSession,
   resetSession,
 } from "./session.ts";
+import { getSnapConfig, setSnapEnabled } from "./snap.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ADMIN_HTML = path.resolve(__dirname, "../public/admin.html");
@@ -287,6 +288,19 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
           paths: result.paths,
           properties: result.feature.properties,
         });
+        return;
+      }
+
+      if (url.pathname === "/api/snap" && method === "GET") {
+        sendJson(res, 200, getSnapConfig());
+        return;
+      }
+
+      if (url.pathname === "/api/snap" && (method === "PUT" || method === "POST")) {
+        const raw = (await readBody(req)).toString("utf8");
+        const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        const en = body.enabled;
+        sendJson(res, 200, setSnapEnabled(en === true || en === "true" || en === 1));
         return;
       }
 

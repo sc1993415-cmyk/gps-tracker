@@ -46,6 +46,12 @@ import {
   setSessionReloadHandler,
   setSessionTrailClearer,
 } from "./session.ts";
+import {
+  loadSnapConfig,
+  isSnapEnabled,
+  getSnapConfig,
+  setSnapReloadHandler,
+} from "./snap.ts";
 import { isDeviceOnline } from "./device-sessions.ts";
 
 /** No packet / no TCP within this window → offline (covers ~5min standby heartbeat). */
@@ -139,6 +145,7 @@ function applyUploadedCourse(result: GpxParseResult & { paths: string[] }) {
 loadRoster();
 loadDiscovery();
 loadEventName();
+loadSnapConfig();
 if (!demo) {
   state.event = { name: getSession().event_name };
 }
@@ -346,17 +353,20 @@ function pruneParticipantsNotInRoster() {
  * Returns on-course lat/lng when projection is usable (for trail drawing).
  */
 function applyCourseProjection(
-  p: Participant
-): { lat: number; lng: number } | null {
+  p: Participant,
+  raw: { lat: number; lng: number }
+): { lat: number; lng: number; dist: number } | null {
   if (!courseIndex || courseIndex.points.length < 2 || !state.course) {
     p.off_course = undefined;
     return null;
   }
   const prev = projByParticipant.get(p.id) ?? { sPrev: 0, lap: 0 };
-  const q = { lat: p.athlete.lat, lng: p.athlete.lng };
+  const maxMapM = getSnapConfig().maxMapM;
+  const q = { lat: raw.lat, lng: raw.lng };
   let result = projectToCourse(courseIndex, q, {
     sPrev: prev.sPrev,
     lap: prev.lap,
+    maxMapM,
   });
 
   // Finish-band lap wrap: near end, then near start → lap++
@@ -364,7 +374,7 @@ function applyCourseProjection(
   if (!result.offCourse && total > 0) {
     const band = Math.min(100, total * 0.08);
     if (prev.sPrev > total - band) {
-      const raw = projectToCourse(courseIndex, q, { lap: prev.lap });
+      const raw = projectToCourse(courseIndex, q, { lap: prev.lap, maxMapM });
       if (!raw.offCourse && raw.s < band) {
         result = { ...raw, lap: prev.lap + 1 };
       }
@@ -381,7 +391,7 @@ function applyCourseProjection(
   p.lap = result.lap;
 
   if (result.offCourse || !result.proj) return null;
-  return { lat: result.proj.lat, lng: result.proj.lng };
+  return { lat: result.proj.lat, lng: result.proj.lng, dist: result.dist };
 }
 
 function clearAllSessionTrails() {
@@ -417,15 +427,34 @@ function applyTelemetry(athlete: Telemetry) {
     recv_ms: Date.now(),
   });
 
+  const rawGps = { lat: athlete.lat, lng: athlete.lng };
   const p = ensureParticipant(athlete);
-  const onCourse = applyCourseProjection(p);
-  // Session recording: only append trail after Start (RaceMap-style projected when GPX present).
+  // Keep raw GPS on athlete for HUD/debug; display may snap to GPX.
+  p.athlete = {
+    ...p.athlete,
+    raw_lat: rawGps.lat,
+    raw_lng: rawGps.lng,
+  };
+  const onCourse = applyCourseProjection(p, rawGps);
+  const snapOn = isSnapEnabled();
+  if (snapOn && onCourse) {
+    p.athlete = {
+      ...p.athlete,
+      lat: onCourse.lat,
+      lng: onCourse.lng,
+    };
+  } else {
+    p.athlete = {
+      ...p.athlete,
+      lat: rawGps.lat,
+      lng: rawGps.lng,
+    };
+  }
+  // Session trail follows display position (snapped when on-course).
   if (isSessionLive()) {
-    const trailMode = (process.env.GPS_TRAIL_MODE || "projected").toLowerCase();
-    const useProj = trailMode !== "raw" && onCourse;
     pushTrailPoint(p.trail, {
-      lat: useProj ? onCourse!.lat : athlete.lat,
-      lng: useProj ? onCourse!.lng : athlete.lng,
+      lat: p.athlete.lat,
+      lng: p.athlete.lng,
       alt_baro: athlete.alt_baro,
       ts: Date.now(),
     });
@@ -445,7 +474,8 @@ function emitState() {
     mapStyle: state.mapStyle,
     listColumns: state.listColumns,
     session: sess,
-  });
+    snap: getSnapConfig(),
+  } as OverlayState);
 }
 
 function cloneParticipants(src: Record<string, Participant>): Record<string, Participant> {
@@ -473,6 +503,7 @@ setRosterReloadHandler(reapplyRosterToParticipants);
 setMapStyleReloadHandler(() => emitState());
 setListColumnsReloadHandler(() => emitState());
 setSessionReloadHandler(() => emitState());
+setSnapReloadHandler(() => emitState());
 
 setSessionTrailClearer(clearAllSessionTrails);
 
@@ -492,7 +523,7 @@ if (demo) {
   seedRosterParticipants();
   pruneParticipantsNotInRoster();
   console.log(
-    `[presence] onlineTimeout=${ONLINE_TIMEOUT_MS}ms fixFresh=${FIX_FRESH_MS}ms trailMode=${process.env.GPS_TRAIL_MODE || "projected"}`
+    `[presence] onlineTimeout=${ONLINE_TIMEOUT_MS}ms fixFresh=${FIX_FRESH_MS}ms snap=${isSnapEnabled()}`
   );
   emitState();
   startH02TcpServer(
