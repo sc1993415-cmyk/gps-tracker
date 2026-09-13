@@ -286,6 +286,43 @@ function seedRosterParticipants() {
   }
 }
 
+/** Drop live participants / caches for device_ids no longer on the roster. */
+function pruneParticipantsNotInRoster() {
+  const roster = getRoster();
+  // Empty roster = allow-all mode; do not wipe everyone.
+  if (roster.length === 0) return;
+  const keep = new Set(roster.map((e) => e.device_id));
+  let removed = 0;
+
+  for (const [deviceId, participantId] of [...deviceToParticipant.entries()]) {
+    if (keep.has(deviceId)) continue;
+    deviceToParticipant.delete(deviceId);
+    lastAcceptedFix.delete(deviceId);
+    if (state.participants[participantId]) {
+      delete state.participants[participantId];
+      projByParticipant.delete(participantId);
+      removed++;
+    }
+  }
+
+  // Orphans: participant id equals a removed device_id, or athlete.device_id not on roster.
+  for (const [id, p] of Object.entries(state.participants)) {
+    const deviceId = p.athlete?.device_id || id;
+    if (keep.has(deviceId) || keep.has(id)) continue;
+    delete state.participants[id];
+    projByParticipant.delete(id);
+    lastAcceptedFix.delete(deviceId);
+    lastAcceptedFix.delete(id);
+    deviceToParticipant.delete(deviceId);
+    deviceToParticipant.delete(id);
+    removed++;
+  }
+
+  if (removed > 0) {
+    console.log(`[roster] pruned ${removed} participant(s) not on roster`);
+  }
+}
+
 /** Project athlete GPS onto course; write progress_* onto participant. */
 function applyCourseProjection(p: Participant) {
   if (!courseIndex || courseIndex.points.length < 2) {
@@ -381,6 +418,7 @@ function cloneParticipants(src: Record<string, Participant>): Record<string, Par
 
 /** After admin save: re-merge roster onto live participants and push WS. */
 function reapplyRosterToParticipants() {
+  pruneParticipantsNotInRoster();
   seedRosterParticipants();
   for (const [deviceId, participantId] of deviceToParticipant) {
     const p = state.participants[participantId];
@@ -408,6 +446,7 @@ if (demo) {
   console.log(`[mt909] starting H02 TCP adapter (port ${port})`);
   // Real devices speak H02 ($ binary / * ASCII); device_id is Traccar-style id (not IMEI).
   seedRosterParticipants();
+  pruneParticipantsNotInRoster();
   console.log(
     `[presence] onlineTimeout=${ONLINE_TIMEOUT_MS}ms fixFresh=${FIX_FRESH_MS}ms`
   );
