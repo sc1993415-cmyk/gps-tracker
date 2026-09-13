@@ -37,6 +37,7 @@ export type Participant = {
   dist_to_finish_m?: number;
   off_course?: boolean;
   lap?: number;
+  last_seen_ms?: number;
 };
 
 export type OverlayState = {

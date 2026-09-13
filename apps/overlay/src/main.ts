@@ -208,7 +208,7 @@ function renderList(participants: Participant[], selected: string | null, state:
     if (cols.speed) parts.push(`<span class="speed">${speed}<small>km/h</small></span>`);
     if (cols.battery) parts.push(`<span class="battery">${escapeHtml(formatBattery(p))}</span>`);
     if (cols.lastUpdate) {
-      parts.push(`<span class="lastUpdate">${escapeHtml(formatLastUpdate(p.athlete.ts))}</span>`);
+      parts.push(`<span class="lastUpdate">${escapeHtml(formatLastUpdate(p.last_seen_ms ?? p.athlete.ts))}</span>`);
     }
     if (cols.offCourse && p.off_course) {
       parts.push(`<span class="offCourse">偏航</span>`);

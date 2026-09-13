@@ -167,6 +167,7 @@ function ensureParticipant(t: Telemetry): Participant {
     p.online = true;
     p.athlete = t;
   }
+  p.last_seen_ms = Date.now();
 
   // Roster is source of truth for display fields when present.
   applyRosterFields(p, t.device_id);

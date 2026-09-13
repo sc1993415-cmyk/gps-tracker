@@ -23,6 +23,8 @@ export type Participant = {
   dist_to_finish_m?: number;
   off_course?: boolean;
   lap?: number;
+  /** Server receive time (ms since epoch) for list last-update. */
+  last_seen_ms?: number;
 };
 
 /** Multi-athlete live overlay payload (Phase 1). */
