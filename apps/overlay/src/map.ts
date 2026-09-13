@@ -11,8 +11,7 @@ export type BasemapId = keyof typeof OPENFREEMAP_STYLES;
 const DEFAULT_STYLE_URL = OPENFREEMAP_STYLES.positron;
 
 /** Duration (ms) to lerp each athlete marker between WebSocket updates. */
-/** Align with MT909 min FREQ (10s) so 10s jumps ease instead of snap. */
-const MARKER_LERP_MS = 10000;
+const MARKER_LERP_MS = 900;
 const LERP_EPSILON = 1e-7;
 
 type MarkerRuntime = {
