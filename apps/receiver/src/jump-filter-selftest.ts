@@ -66,4 +66,28 @@ const prev = { lat: 32.04811, lng: 118.74196, ts: t0, recv_ms: 1_000_000 };
   assert(!r.reject, `mid-gap 50m/10s should accept dt=${r.dt} step=${r.step_m}`);
 }
 
+// Burst: ~1.1 m in 2 ms must ACCEPT (was false nail at "500 m/s")
+{
+  const next = {
+    lat: 32.04812,
+    lng: 118.74196,
+    ts: t0 + 1000,
+    recv_ms: 1_000_002,
+  };
+  const r = checkJump(prev, next);
+  assert(!r.reject, `burst 1m/2ms should accept step=${r.step_m} dt=${r.dt} speed=${r.speed_ms}`);
+}
+
+// Burst teleport 50 m in 2 ms — still reject via step
+{
+  const next = {
+    lat: 32.04856,
+    lng: 118.74196,
+    ts: t0 + 1000,
+    recv_ms: 1_000_002,
+  };
+  const r = checkJump(prev, next);
+  assert(r.reject, `burst 50m/2ms should reject step=${r.step_m}`);
+}
+
 console.log("jump-filter-selftest PASS");

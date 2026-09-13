@@ -7,6 +7,11 @@ export const DEFAULT_MAX_STEP_M = Number(process.env.GPS_MAX_STEP_M) || 40;
 export const DEFAULT_MAX_GAP_S = Number(process.env.GPS_MAX_GAP_S) || 30;
 /** Only reject wild spikes when recv Δt is within this window (1Hz). */
 export const DEFAULT_SPIKE_WINDOW_S = Number(process.env.GPS_SPIKE_WINDOW_S) || 3;
+/**
+ * Below this recv Δt, do NOT use speed_ms (batched packets share ~0ms and
+ * turn 1m walks into "500 m/s"). Only reject absurd same-tick teleports via maxStepM.
+ */
+export const DEFAULT_MIN_SPEED_DT_S = Number(process.env.GPS_MIN_SPEED_DT_S) || 0.4;
 
 export type AcceptedFix = { lat: number; lng: number; ts: number; recv_ms?: number };
 
@@ -20,7 +25,8 @@ export type JumpCheck = {
 /**
  * Clamp using server receive time, never broken device clock for step/Δt.
  * - recvΔt > maxGapS, or device ts rewind/junk → accept (reset lastAccepted)
- * - only when 0 < recvΔt ≤ spikeWindowS → reject if speed or step too high
+ * - only when 0 < recvΔt ≤ spikeWindowS → wild-point checks
+ * - recvΔt < minSpeedDtS → only step_m > maxStepM (ignore inflated speed)
  * - mid gaps (spikeWindowS < recvΔt ≤ maxGapS) → accept
  */
 export function checkJump(
@@ -29,7 +35,8 @@ export function checkJump(
   maxSpeedMs = DEFAULT_MAX_SPEED_MS,
   maxStepM = DEFAULT_MAX_STEP_M,
   maxGapS = DEFAULT_MAX_GAP_S,
-  spikeWindowS = DEFAULT_SPIKE_WINDOW_S
+  spikeWindowS = DEFAULT_SPIKE_WINDOW_S,
+  minSpeedDtS = DEFAULT_MIN_SPEED_DT_S
 ): JumpCheck {
   const step_m = haversineM(
     { lat: prev.lat, lng: prev.lng },
@@ -75,6 +82,17 @@ export function checkJump(
   }
 
   const speed_ms = step_m / recvDt;
+
+  // Same-tick / burst: speed is meaningless — only nail true teleports.
+  if (recvDt < minSpeedDtS) {
+    return {
+      reject: step_m > maxStepM,
+      step_m,
+      dt: recvDt,
+      speed_ms,
+    };
+  }
+
   return {
     reject: speed_ms > maxSpeedMs || step_m > maxStepM,
     step_m,
