@@ -1,7 +1,14 @@
 import maplibregl from "maplibre-gl";
 import type { OverlayState, CourseFeature } from "./ws";
 
-const STYLE = "https://demotiles.maplibre.org/style.json";
+export const OPENFREEMAP_STYLES = {
+  positron: "https://tiles.openfreemap.org/styles/positron",
+  liberty: "https://tiles.openfreemap.org/styles/liberty",
+} as const;
+
+export type BasemapId = keyof typeof OPENFREEMAP_STYLES;
+
+const DEFAULT_STYLE_URL = OPENFREEMAP_STYLES.positron;
 
 /** Duration (ms) to lerp each athlete marker between WebSocket updates. */
 const MARKER_LERP_MS = 900;
@@ -31,50 +38,74 @@ export type MapController = {
     }
   ) => void;
   setFollow: (follow: boolean) => void;
+  setBasemapUrl: (url: string) => void;
 };
 
-export function createMap(container: string): MapController {
+export function createMap(
+  container: string,
+  initialStyleUrl = DEFAULT_STYLE_URL
+): MapController {
   const map = new maplibregl.Map({
     container,
-    style: STYLE,
+    style: initialStyleUrl,
     center: [121.4737, 31.2304],
     zoom: 14,
-    attributionControl: false,
+    attributionControl: true,
   });
 
   const markers = new Map<string, MarkerRuntime>();
   let followSelected = true;
   let courseReady = false;
+  let activeStyleUrl = initialStyleUrl;
+  let lastCourse: CourseFeature | null | undefined;
+  let lastTrailFc: GeoJSON.FeatureCollection = {
+    type: "FeatureCollection",
+    features: [],
+  };
 
-  map.on("load", () => {
-    map.addSource("course", { type: "geojson", data: emptyLine() });
-    map.addLayer({
-      id: "course-line",
-      type: "line",
-      source: "course",
-      paint: {
-        "line-color": "#e53935",
-        "line-width": 6,
-        "line-opacity": 0.75,
-      },
-    });
-
-    map.addSource("trails", {
-      type: "geojson",
-      data: { type: "FeatureCollection", features: [] },
-    });
-    map.addLayer({
-      id: "trails-line",
-      type: "line",
-      source: "trails",
-      paint: {
-        "line-color": ["get", "color"],
-        "line-width": ["case", ["==", ["get", "selected"], 1], 5, 2.5],
-        "line-opacity": ["case", ["==", ["get", "selected"], 1], 1, 0.45],
-      },
-    });
+  function mountOverlayLayers() {
+    if (!map.getSource("course")) {
+      map.addSource("course", { type: "geojson", data: emptyLine() });
+      map.addLayer({
+        id: "course-line",
+        type: "line",
+        source: "course",
+        paint: {
+          "line-color": "#e53935",
+          "line-width": 6,
+          "line-opacity": 0.75,
+        },
+      });
+    }
+    if (!map.getSource("trails")) {
+      map.addSource("trails", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addLayer({
+        id: "trails-line",
+        type: "line",
+        source: "trails",
+        paint: {
+          "line-color": ["get", "color"],
+          "line-width": ["case", ["==", ["get", "selected"], 1], 5, 2.5],
+          "line-opacity": ["case", ["==", ["get", "selected"], 1], 1, 0.45],
+        },
+      });
+    }
     courseReady = true;
-  });
+    // Restore last course/trails after style swap
+    const courseSrc = map.getSource("course") as maplibregl.GeoJSONSource | undefined;
+    if (courseSrc) {
+      if (lastCourse?.geometry?.coordinates?.length) courseSrc.setData(lastCourse);
+      else courseSrc.setData(emptyLine());
+    }
+    const trailsSrc = map.getSource("trails") as maplibregl.GeoJSONSource | undefined;
+    trailsSrc?.setData(lastTrailFc);
+  }
+
+  map.on("load", () => mountOverlayLayers());
+  map.on("style.load", () => mountOverlayLayers());
 
   function ensureMarker(id: string, color: string): MarkerRuntime {
     let rt = markers.get(id);
@@ -140,6 +171,7 @@ export function createMap(container: string): MapController {
   }
 
   function setCourse(course: CourseFeature | null | undefined) {
+    lastCourse = course ?? null;
     if (!courseReady) return;
     const src = map.getSource("course") as maplibregl.GeoJSONSource | undefined;
     if (!src) return;
@@ -154,7 +186,18 @@ export function createMap(container: string): MapController {
     setFollow(follow: boolean) {
       followSelected = follow;
     },
+    setBasemapUrl(url: string) {
+      const next = (url || "").trim();
+      if (!next || next === activeStyleUrl) return;
+      activeStyleUrl = next;
+      courseReady = false;
+      map.setStyle(next);
+    },
     update(state, opts) {
+      if (state.mapStyle?.url) {
+        this.setBasemapUrl(state.mapStyle.url);
+      }
+
       const participants = Object.values(state.participants);
       const selectedId = opts.selectedId;
       const hideNonSelected = opts.hideNonSelected;
@@ -211,8 +254,9 @@ export function createMap(container: string): MapController {
         }
       }
 
+      lastTrailFc = { type: "FeatureCollection", features: trailFeatures };
       const trailsSrc = map.getSource("trails") as maplibregl.GeoJSONSource | undefined;
-      trailsSrc?.setData({ type: "FeatureCollection", features: trailFeatures });
+      trailsSrc?.setData(lastTrailFc);
 
       if (followSelected && selectedId) {
         const sel = state.participants[selectedId];

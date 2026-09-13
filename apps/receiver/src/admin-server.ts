@@ -15,6 +15,11 @@ import {
   isDeviceOnline,
   type Mt909CmdKind,
 } from "./device-sessions.ts";
+import {
+  getMapStyle,
+  saveMapStyle,
+  listMapStyles,
+} from "./map-style.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ADMIN_HTML = path.resolve(__dirname, "../public/admin.html");
@@ -116,6 +121,20 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
         return;
       }
 
+
+      if (url.pathname === "/api/map-style" && method === "GET") {
+        sendJson(res, 200, { current: getMapStyle(), options: listMapStyles() });
+        return;
+      }
+
+      if (url.pathname === "/api/map-style" && (method === "PUT" || method === "POST")) {
+        const raw = await readBody(req);
+        const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        const id = body.id ?? body.style ?? body.mapStyle;
+        sendJson(res, 200, saveMapStyle(id));
+        return;
+      }
+
       if (url.pathname === "/api/devices/online" && method === "GET") {
         sendJson(res, 200, { online: listOnlineDevices() });
         return;
@@ -175,7 +194,7 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
   });
 
   server.listen(port, () => {
-    console.log(`[admin] roster UI http://localhost:${port}/  (API /api/roster /api/command)`);
+    console.log(`[admin] roster UI http://localhost:${port}/  (API /api/roster /api/command /api/map-style)`);
   });
   server.on("error", (err) => {
     console.error("[admin] server error", err);

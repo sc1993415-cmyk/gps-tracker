@@ -96,7 +96,9 @@
         font-size: 13px; color: var(--muted);
       }
       #status.ok, #cmd-status.ok { color: var(--ok); }
-      #status.err, #cmd-status.err { color: #ff8da0; }
+      #status.err, #cmd-status.err, #map-style-status.err { color: #ff8da0; }
+      #status.ok, #cmd-status.ok, #map-style-status.ok { color: var(--ok); }
+      #map-style-status { min-height: 18px; margin-top: 10px; font-size: 13px; color: var(--muted); }
       #cmd-status { min-height: 18px; margin-top: 10px; font-size: 13px; color: var(--muted); }
       .empty { color: var(--muted); padding: 12px 0; }
     </style>
@@ -134,6 +136,25 @@
         <div id="status"></div>
       </div>
 
+
+
+      <div class="panel">
+        <h2>底图（OpenFreeMap / OSM）</h2>
+        <p class="sub" style="margin-top:0">默认 Positron 浅底；Liberty 偏路网。WGS84，无需 GCJ 偏移。叠层经 WS 热更新；也可用 <code>#style=positron</code> / <code>#style=liberty</code> 覆盖。</p>
+        <form id="map-style-form" class="grid" style="grid-template-columns: 1.4fr auto;" autocomplete="off">
+          <label>
+            底图样式
+            <select id="map_style_id" style="width:100%;border:1px solid var(--border);background:var(--input);color:var(--text);border-radius:8px;padding:10px 12px;font:500 14px/1.2 system-ui,sans-serif;">
+              <option value="positron">Positron（浅底，推荐直播）</option>
+              <option value="liberty">Liberty（路网）</option>
+            </select>
+          </label>
+          <div class="actions">
+            <button type="submit" class="primary">保存底图</button>
+          </div>
+        </form>
+        <div id="map-style-status"></div>
+      </div>
 
       <div class="panel">
         <h2>设备指令下发（MT909 官方短信原文 → TCP）</h2>
@@ -383,6 +404,38 @@
           setCmdStatus(err.message || String(err), "err");
         }
       });
+
+
+      // --- basemap style ---
+      const mapStyleStatus = $("map-style-status");
+      function setMapStyleStatus(msg, kind) {
+        mapStyleStatus.textContent = msg || "";
+        mapStyleStatus.className = kind || "";
+      }
+      async function loadMapStyle() {
+        try {
+          const data = await api("/api/map-style");
+          const id = data.current?.id || "positron";
+          $("map_style_id").value = id === "liberty" ? "liberty" : "positron";
+          setMapStyleStatus(`当前：${id} — ${data.current?.url || ""}`);
+        } catch (err) {
+          setMapStyleStatus(err.message || String(err), "err");
+        }
+      }
+      $("map-style-form").addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        try {
+          const id = $("map_style_id").value;
+          const data = await api("/api/map-style", {
+            method: "PUT",
+            body: JSON.stringify({ id }),
+          });
+          setMapStyleStatus(`已保存：${data.id}（叠层将热更新）`, "ok");
+        } catch (err) {
+          setMapStyleStatus(err.message || String(err), "err");
+        }
+      });
+      loadMapStyle();
 
 </script>
   </body>

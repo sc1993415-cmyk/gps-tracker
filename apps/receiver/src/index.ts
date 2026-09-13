@@ -9,6 +9,11 @@ import {
   getRosterEntry,
   setRosterReloadHandler,
 } from "./roster.ts";
+import {
+  loadMapStyle,
+  getMapStyle,
+  setMapStyleReloadHandler,
+} from "./map-style.ts";
 import type { OverlayState, Participant, TrailPoint, CourseFeature } from "./ws-server.ts";
 import type { Telemetry } from "../../../packages/schema/src/telemetry.ts";
 import {
@@ -57,6 +62,7 @@ const state: OverlayState = {
   event: { name: demo ? "演示赛" : "实时追踪" },
   course: demo ? DEMO_COURSE : null,
   participants: {},
+  mapStyle: undefined,
 };
 
 /** device_id / IMEI → participant id (defaults to device_id). */
@@ -68,6 +74,7 @@ const lastAcceptedFix = new Map<string, AcceptedFix>();
 const DEMO_COLORS = new Map(DEFAULT_ATHLETES.map((a) => [a.device_id, a.color]));
 
 loadRoster();
+loadMapStyle();
 startAdminServer(Number(process.env.ADMIN_PORT) || 8790);
 
 /** Merge roster bib/name/color onto an existing or new participant. */
@@ -185,10 +192,12 @@ function applyTelemetry(athlete: Telemetry) {
 }
 
 function emitState() {
+  state.mapStyle = getMapStyle();
   broadcast({
     event: state.event,
     course: state.course,
     participants: cloneParticipants(state.participants),
+    mapStyle: state.mapStyle,
   });
 }
 

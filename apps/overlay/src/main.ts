@@ -1,6 +1,6 @@
 import "maplibre-gl/dist/maplibre-gl.css";
 import { connectOverlayWs, type OverlayState, type Participant } from "./ws";
-import { createMap } from "./map";
+import { createMap, OPENFREEMAP_STYLES } from "./map";
 import { loadCourse, DEMO_COURSE } from "./course";
 import type { CourseFeature } from "./ws";
 
@@ -23,6 +23,9 @@ function parseParams() {
     const v = q.get(k);
     return v === "0" || v === "false";
   };
+  const styleRaw = (q.get("style") || "").trim().toLowerCase();
+  const styleOverride =
+    styleRaw === "liberty" || styleRaw === "positron" ? styleRaw : null;
   return {
     selected: q.get("selected"),
     selectedStartNumber: q.get("selectedStartNumber") || q.get("startNumber"),
@@ -31,11 +34,17 @@ function parseParams() {
     hideNonSelected: truthy("hideNonSelected"),
     listOpen: falsy("listOpen") ? false : true,
     ws: q.get("ws") || `ws://${location.hostname}:8787`,
+    styleOverride,
   };
 }
 
 const params = parseParams();
-const map = createMap("map");
+const hashStyleUrl = params.styleOverride
+  ? OPENFREEMAP_STYLES[params.styleOverride]
+  : undefined;
+const map = createMap("map", hashStyleUrl);
+// Hash #style= overrides WS mapStyle for this page load.
+const stylePinnedByHash = Boolean(params.styleOverride);
 
 const root = document.documentElement;
 if (params.largeMode) root.classList.add("large-mode");
@@ -189,7 +198,10 @@ function render() {
   renderList(participants, selectedId);
   const sel = selectedId ? state.participants[selectedId] ?? null : null;
   renderHud(sel);
-  map.update(state, {
+  const mapState = stylePinnedByHash
+    ? { ...state, mapStyle: undefined }
+    : state;
+  map.update(mapState, {
     selectedId,
     follow: true,
     hideNonSelected: params.hideNonSelected,

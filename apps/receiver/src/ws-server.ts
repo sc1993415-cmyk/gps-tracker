@@ -30,6 +30,8 @@ export type OverlayState = {
   event?: { name: string };
   course?: CourseFeature | null;
   participants: Record<string, Participant>;
+  /** OpenFreeMap style id + url for overlay basemap. */
+  mapStyle?: { id: string; url: string };
 };
 
 /** Legacy single-athlete shape (kept for docs / shim reference). */

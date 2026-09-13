@@ -40,6 +40,7 @@ export type OverlayState = {
   event?: { name: string };
   course?: CourseFeature | null;
   participants: Record<string, Participant>;
+  mapStyle?: { id: string; url: string };
 };
 
 /** Legacy single-athlete shape — wrapped as one participant when received. */
@@ -54,6 +55,7 @@ export function normalizeOverlayState(raw: unknown): OverlayState {
       event: o.event as OverlayState["event"],
       course: (o.course as OverlayState["course"]) ?? null,
       participants: o.participants as Record<string, Participant>,
+      mapStyle: (o.mapStyle as OverlayState["mapStyle"]) ?? undefined,
     };
   }
 
