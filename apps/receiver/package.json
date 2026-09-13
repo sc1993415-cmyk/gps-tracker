@@ -11,7 +11,9 @@
     "test:jump": "tsx src/jump-filter-selftest.ts",
     "test:cmd": "tsx src/device-sessions-selftest.ts",
     "test:battery": "tsx src/battery-selftest.ts",
-    "test:gpx": "tsx src/gpx-selftest.ts"
+    "test:gpx": "tsx src/gpx-selftest.ts",
+    "test:cell": "tsx src/cell-lookup-selftest.ts",
+    "test:lbs": "tsx src/h02-lbs-selftest.ts"
   },
   "dependencies": {
     "mqtt": "^5.10.3",

@@ -99,7 +99,7 @@ export function selectFix(
     return {
       id,
       source: "lbs",
-      // no cell DB yet — coordinates omitted (TODO OpenCelliD)
+      // coords resolved later in emitLbsIfReady via OpenCelliD LAC lookup
       valid: false,
       ts: lbs.recvMs,
       mcc: lbs.cell.mcc,

@@ -2,6 +2,7 @@ import { createWsServer } from "./ws-server.ts";
 import { pushTrailPoint } from "./downsample.ts";
 import { startDemoPublisher, DEFAULT_ATHLETES } from "./demo-publisher.ts";
 import { startH02TcpServer } from "./h02-tcp.ts";
+import { ensureCellDbLoaded, getCellDbStats } from "./cell-lookup.ts";
 import { startAdminServer } from "./admin-server.ts";
 import {
   loadRoster,
@@ -403,35 +404,41 @@ function clearAllSessionTrails() {
 
 function applyTelemetry(athlete: Telemetry) {
   const recvMs = Date.now();
+  const isLbs = athlete.source === "lbs";
   const prev = lastAcceptedFix.get(athlete.device_id);
-  // Drop reconnect buffer / clock rewind: device_ts is filter-only, not the play clock.
-  const stale = checkStaleDeviceTs(athlete.ts, recvMs, prev?.ts);
-  if (stale.drop) {
-    console.warn(
-      `[gps] drop stale id=${athlete.device_id} reason=${stale.reason} ` +
-        `lag_s=${stale.lag_s.toFixed(1)} rewind_s=${stale.rewind_s.toFixed(1)} ` +
-        `device_ts=${new Date(athlete.ts).toISOString()} recv=${new Date(recvMs).toISOString()}`
-    );
-    return;
-  }
-  if (prev) {
-    const jump = checkJump(prev, {
-      lat: athlete.lat,
-      lng: athlete.lng,
-      ts: athlete.ts,
-      recv_ms: recvMs,
-    });
-    if (jump.reject) {
+
+  // LBS coarse fixes: keep stale-ts check optional — skip jump reject & course snap.
+  if (!isLbs) {
+    // Drop reconnect buffer / clock rewind: device_ts is filter-only, not the play clock.
+    const stale = checkStaleDeviceTs(athlete.ts, recvMs, prev?.ts);
+    if (stale.drop) {
       console.warn(
-        `[gps] reject jump id=${athlete.device_id} step_m=${jump.step_m.toFixed(1)} ` +
-          `dt=${jump.dt.toFixed(2)}s speed_ms=${jump.speed_ms.toFixed(1)} ` +
-          `(nail previous)`
+        `[gps] drop stale id=${athlete.device_id} reason=${stale.reason} ` +
+          `lag_s=${stale.lag_s.toFixed(1)} rewind_s=${stale.rewind_s.toFixed(1)} ` +
+          `device_ts=${new Date(athlete.ts).toISOString()} recv=${new Date(recvMs).toISOString()}`
       );
-      // Keep lat/lng nailed; clear HUD speed so stale km/h does not stick.
-      touchPresence(athlete.device_id, { zeroSpeed: true, forceEmit: true });
       return;
     }
+    if (prev) {
+      const jump = checkJump(prev, {
+        lat: athlete.lat,
+        lng: athlete.lng,
+        ts: athlete.ts,
+        recv_ms: recvMs,
+      });
+      if (jump.reject) {
+        console.warn(
+          `[gps] reject jump id=${athlete.device_id} step_m=${jump.step_m.toFixed(1)} ` +
+            `dt=${jump.dt.toFixed(2)}s speed_ms=${jump.speed_ms.toFixed(1)} ` +
+            `(nail previous)`
+        );
+        // Keep lat/lng nailed; clear HUD speed so stale km/h does not stick.
+        touchPresence(athlete.device_id, { zeroSpeed: true, forceEmit: true });
+        return;
+      }
+    }
   }
+
   lastAcceptedFix.set(athlete.device_id, {
     lat: athlete.lat,
     lng: athlete.lng,
@@ -441,27 +448,43 @@ function applyTelemetry(athlete: Telemetry) {
 
   const rawGps = { lat: athlete.lat, lng: athlete.lng };
   const p = ensureParticipant(athlete);
-  // Keep raw GPS on athlete for HUD/debug; display may snap to GPX.
+  // Preserve source / cell fields from telemetry (ensureParticipant already assigned athlete).
   p.athlete = {
     ...p.athlete,
+    ...athlete,
     raw_lat: rawGps.lat,
     raw_lng: rawGps.lng,
+    speed: isLbs ? 0 : athlete.speed,
   };
-  const onCourse = applyCourseProjection(p, rawGps);
-  const snapOn = isSnapEnabled();
-  if (snapOn && onCourse) {
-    p.athlete = {
-      ...p.athlete,
-      lat: onCourse.lat,
-      lng: onCourse.lng,
-    };
-  } else {
+
+  if (isLbs) {
+    // Coarse cell position: use raw lat/lng, no course snap; still refresh progress hooks lightly.
+    applyCourseProjection(p, rawGps); // updates progress_m / last side effects if any
     p.athlete = {
       ...p.athlete,
       lat: rawGps.lat,
       lng: rawGps.lng,
+      source: "lbs",
+      speed: 0,
     };
+  } else {
+    const onCourse = applyCourseProjection(p, rawGps);
+    const snapOn = isSnapEnabled();
+    if (snapOn && onCourse) {
+      p.athlete = {
+        ...p.athlete,
+        lat: onCourse.lat,
+        lng: onCourse.lng,
+      };
+    } else {
+      p.athlete = {
+        ...p.athlete,
+        lat: rawGps.lat,
+        lng: rawGps.lng,
+      };
+    }
   }
+
   // Session trail follows display position (snapped when on-course).
   if (isSessionLive()) {
     pushTrailPoint(p.trail, {
@@ -531,6 +554,11 @@ if (demo) {
     Number(process.env.MT909_TCP_PORT) ||
     5013;
   console.log(`[mt909] starting H02 TCP adapter (port ${port})`);
+  ensureCellDbLoaded();
+  {
+    const st = getCellDbStats();
+    console.log(`[cell] startup rows=${st.rows} path=${st.path ?? "(none)"}`);
+  }
   // Real devices speak H02 ($ binary / * ASCII); device_id is Traccar-style id (not IMEI).
   seedRosterParticipants();
   pruneParticipantsNotInRoster();

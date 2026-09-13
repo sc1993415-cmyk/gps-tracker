@@ -21,6 +21,7 @@ import {
   isUsableGps,
   type FusedFix,
 } from "./h02-fix-select.ts";
+import { ensureCellDbLoaded, lookupCell } from "./cell-lookup.ts";
 
 export type TelemetryHandler = (t: Telemetry) => void;
 
@@ -339,17 +340,40 @@ function emitLbsIfReady(
   const id = fused.id || boundId;
   if (!id) return;
   onPresence?.(id);
-  // Cell-only until a cell DB is wired — do not invent lat/lng.
-  if (fused.lat == null || fused.lng == null) {
+
+  let lat = fused.lat;
+  let lng = fused.lng;
+  let match: string | undefined;
+
+  // Resolve offline OpenCelliD when selectFix left coords empty (LAC-primary).
+  if (
+    (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) &&
+    fused.mcc != null &&
+    fused.mnc != null &&
+    fused.lac != null
+  ) {
+    const hit = lookupCell(fused.mcc, fused.mnc, fused.lac, fused.ci);
+    if (hit) {
+      lat = hit.lat;
+      lng = hit.lng;
+      match = hit.match;
+    }
+  }
+
+  if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) {
     console.log(
       `[h02] fused source=lbs id=${id} cell-only mcc=${fused.mcc} mnc=${fused.mnc} lac=${fused.lac} ci=${fused.ci} rawHex=${fused.rawHex}`
     );
     return;
   }
+
+  console.log(
+    `[h02] fused source=lbs id=${id} match=${match ?? "coords"} lat=${lat.toFixed(5)} lng=${lng.toFixed(5)} mcc=${fused.mcc} mnc=${fused.mnc} lac=${fused.lac} ci=${fused.ci}`
+  );
   onTelemetry({
     device_id: id,
-    lat: fused.lat,
-    lng: fused.lng,
+    lat,
+    lng,
     speed: 0,
     alt_baro: 0,
     climb: 0,
@@ -377,6 +401,7 @@ export function startH02TcpServer(
     onPresence?: (deviceId: string) => void;
   } = {}
 ) {
+  ensureCellDbLoaded();
   const sendAck = opts.sendAck !== false;
   const onInvalid = opts.onInvalid;
   const onPresence = opts.onPresence;

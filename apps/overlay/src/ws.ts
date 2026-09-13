@@ -17,6 +17,13 @@ export type Telemetry = {
   battery_bars?: number;
   raw_lat?: number;
   raw_lng?: number;
+  /** Fix source after GPS/LBS selection. */
+  source?: "gps" | "lbs";
+  mcc?: number;
+  mnc?: number;
+  lac?: number;
+  ci?: number;
+  raw_hex?: string;
 };
 
 export type CourseFeature = {

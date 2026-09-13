@@ -219,12 +219,22 @@ function renderList(participants: Participant[], selected: string | null, state:
       parts.push(`<span class="offCourse">偏航</span>`);
     }
     if (cols.online) {
-      const st = p.fix_status ?? (p.online ? "online_no_fix" : "offline");
-      const cls =
-        st === "fixing" ? "fixing" : st === "online_no_fix" ? "no-fix" : "off";
-      const title =
-        st === "fixing" ? "定位中" : st === "online_no_fix" ? "在线·无定位" : "离线";
-      parts.push(`<span class="online ${cls}" title="${title}"></span>`);
+      const isLbs =
+        p.athlete?.source === "lbs" &&
+        Number.isFinite(p.athlete.lat) &&
+        Math.abs(p.athlete.lat) + Math.abs(p.athlete.lng) > 1e-6;
+      if (isLbs) {
+        parts.push(
+          `<span class="online lbs" title="LBS粗定位"></span><span class="lbs-tag">LBS</span>`
+        );
+      } else {
+        const st = p.fix_status ?? (p.online ? "online_no_fix" : "offline");
+        const cls =
+          st === "fixing" ? "fixing" : st === "online_no_fix" ? "no-fix" : "off";
+        const title =
+          st === "fixing" ? "定位中" : st === "online_no_fix" ? "在线·无定位" : "离线";
+        parts.push(`<span class="online ${cls}" title="${title}"></span>`);
+      }
     }
     const li = document.createElement("button");
     li.type = "button";
