@@ -69,10 +69,10 @@ export function isPlausibleDeviceId(deviceId: string): boolean {
   if (!id) return false;
   // Real H02 short id ~10 digits; IMEI 15 digits. Allow 8–15 digits.
   if (!/^\d{8,15}$/.test(id)) return false;
-  // Doubled $ mis-sync often invents ids starting with 24… and wrong length 10 like 2470262388
+  // Doubled $ mis-sync often invents ids starting with 24… (e.g. 2470262388)
   if (id.startsWith("24") && id.length === 10) return false;
-  // Historical ghost bib fragment
-  if (id === "2388" || id.length < 8) return false;
+  // Historical ghosts: bib fragment / name=slice(-6) of 7026238813
+  if (id === "2388" || id === "238813" || id.length < 8) return false;
   return true;
 }
 
@@ -95,8 +95,7 @@ export function noteUnknownSighting(
   if (!isPlausibleCoord(lat, lng)) return null;
   // Already on roster (by H02 id or IMEI alias) — not unknown.
   if (resolveRosterEntry(id)) return null;
-  // Only discover when a roster exists (whitelist mode). Empty roster = allow-all.
-  if (getRoster().length === 0) return null;
+  // Empty roster is still whitelist-empty: unknowns go to pending, never auto onto overlay.
 
   const now = Date.now();
   const prev = byId.get(id);

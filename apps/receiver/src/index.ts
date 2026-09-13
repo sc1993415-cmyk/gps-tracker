@@ -14,6 +14,7 @@ import {
   loadDiscovery,
   noteUnknownSighting,
   clearDiscoveredOnRoster,
+  isPlausibleDeviceId,
 } from "./discovery.ts";
 import {
   loadMapStyle,
@@ -205,7 +206,7 @@ function colorForId(id: string): string {
 }
 
 function allowDevice(deviceId: string): boolean {
-  if (getRoster().length === 0) return true;
+  // Always whitelist: empty roster → nobody on overlay (discovery still collects unknowns).
   return !!resolveRosterEntry(deviceId);
 }
 
@@ -271,6 +272,7 @@ function ensurePresenceParticipant(deviceId: string): Participant {
 }
 
 function touchPresence(deviceId: string, opts: { zeroSpeed?: boolean; forceEmit?: boolean } = {}) {
+  if (!isPlausibleDeviceId(deviceId)) return;
   if (!allowDevice(deviceId)) return;
   const p = ensurePresenceParticipant(deviceId);
   const now = Date.now();
@@ -296,9 +298,8 @@ function seedRosterParticipants() {
 /** Drop live participants / caches for device_ids no longer on the roster. */
 function pruneParticipantsNotInRoster() {
   const roster = getRoster();
-  // Empty roster = allow-all mode; do not wipe everyone.
-  if (roster.length === 0) return;
   const keep = new Set(roster.map((e) => e.device_id));
+  // Empty roster → wipe all live participants from overlay.
   let removed = 0;
 
   for (const [deviceId, participantId] of [...deviceToParticipant.entries()]) {
@@ -471,9 +472,13 @@ if (demo) {
   emitState();
   startH02TcpServer(
     (t) => {
+      if (!isPlausibleDeviceId(t.device_id)) {
+        console.warn(`[mt909] drop ghost device_id=${t.device_id}`);
+        return;
+      }
       if (!allowDevice(t.device_id)) {
         noteUnknownSighting(t.device_id, t.lat, t.lng);
-        console.warn(`[mt909] ignore unknown device_id=${t.device_id}`);
+        console.warn(`[mt909] ignore unknown device_id=${t.device_id} (pending discovery)`);
         return;
       }
       applyTelemetry(t);

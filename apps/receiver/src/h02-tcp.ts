@@ -174,10 +174,14 @@ export function h02PositionToTelemetry(pos: H02BinaryPosition): Telemetry | null
   if (!Number.isFinite(pos.lat) || !Number.isFinite(pos.lng)) return null;
   // Drop misframed ghosts (e.g. doubled `$` → lng ≈ -641).
   if (pos.lat < -90 || pos.lat > 90 || pos.lng < -180 || pos.lng > 180) return null;
+  // Never publish suffix fragments like 238813 (was device_id.slice(-6)).
+  const id = String(pos.device_id || "").trim();
+  if (!/^\d{8,15}$/.test(id)) return null;
+  if (id.startsWith("24") && id.length === 10) return null;
+  if (id === "2388" || id === "238813") return null;
 
-  const name = pos.device_id.length > 6 ? pos.device_id.slice(-6) : pos.device_id;
   const t: Telemetry = {
-    device_id: pos.device_id,
+    device_id: id,
     lat: pos.lat,
     lng: pos.lng,
     speed: pos.speedKmh,
@@ -185,7 +189,7 @@ export function h02PositionToTelemetry(pos: H02BinaryPosition): Telemetry | null
     climb: 0,
     ts: pos.ts,
     bib: "",
-    name,
+    name: id,
     distance: 0,
   };
   if (Number.isFinite(pos.course)) t.heading = pos.course;
@@ -267,8 +271,12 @@ export function parseH02AsciiText(sentence: string): Telemetry | null {
 
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
 
+  const deviceId = String(id || "").trim();
+  if (!/^\d{8,15}$/.test(deviceId)) return null;
+  if (deviceId === "2388" || deviceId === "238813") return null;
+
   const t: Telemetry = {
-    device_id: id,
+    device_id: deviceId,
     lat,
     lng,
     speed: Math.round(speedKn * 1.852 * 10) / 10,
@@ -276,7 +284,7 @@ export function parseH02AsciiText(sentence: string): Telemetry | null {
     climb: 0,
     ts,
     bib: "",
-    name: id.length > 6 ? id.slice(-6) : id,
+    name: deviceId,
     distance: 0,
   };
   if (Number.isFinite(course)) t.heading = course;
