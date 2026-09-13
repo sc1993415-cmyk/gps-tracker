@@ -42,12 +42,22 @@ export type Participant = {
   fix_status?: "fixing" | "online_no_fix" | "offline";
 };
 
+export type SessionStatus = "idle" | "live" | "ended";
+
+export type SessionInfo = {
+  status: SessionStatus;
+  event_name: string;
+  started_ms?: number;
+  ended_ms?: number;
+};
+
 export type OverlayState = {
   event?: { name: string };
   course?: CourseFeature | null;
   participants: Record<string, Participant>;
   mapStyle?: { id: string; url: string };
   listColumns?: { id: string; enabled: boolean }[];
+  session?: SessionInfo;
 };
 
 /** Legacy single-athlete shape — wrapped as one participant when received. */
@@ -64,6 +74,7 @@ export function normalizeOverlayState(raw: unknown): OverlayState {
       participants: o.participants as Record<string, Participant>,
       mapStyle: (o.mapStyle as OverlayState["mapStyle"]) ?? undefined,
       listColumns: (o.listColumns as OverlayState["listColumns"]) ?? undefined,
+      session: (o.session as OverlayState["session"]) ?? undefined,
     };
   }
 

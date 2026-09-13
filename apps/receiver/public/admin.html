@@ -136,6 +136,28 @@
       <h1>选手名册</h1>
       <p class="sub">主键用 H02 设备号（如 <code>7026238813</code>），可选填贴纸 IMEI 别名。陌生设备进「待确认」后一键添加。支持 CSV 导入导出。</p>
 
+
+      <div class="panel">
+        <h2>活动 / 轨迹场次</h2>
+        <p class="sub" style="margin-top:0">开始后才记本场轨迹；结束可回放；重置清空本场点（名单/GPX 不动）。叠层左上显示活动名与 LIVE。</p>
+        <form id="event-name-form" class="grid" style="grid-template-columns: 1.6fr auto;" autocomplete="off">
+          <label>
+            活动名称
+            <input id="event_name" type="text" placeholder="Race Live" />
+          </label>
+          <div class="actions">
+            <button type="submit" class="primary">保存名称</button>
+          </div>
+        </form>
+        <div class="actions" style="margin-top:12px">
+          <button type="button" class="primary" id="btn-session-start">开始</button>
+          <button type="button" id="btn-session-end">结束</button>
+          <button type="button" class="danger" id="btn-session-reset">重置</button>
+          <button type="button" id="btn-session-reload">刷新状态</button>
+        </div>
+        <div id="session-status" class="sub" style="margin-top:8px"></div>
+      </div>
+
       <div class="panel">
         <h2>添加 / 编辑</h2>
         <form id="form" class="grid" autocomplete="off">
@@ -679,6 +701,70 @@
         }
       });
       $("btn-list-columns-reload").addEventListener("click", loadListColumns);
+      
+      // --- session / event name ---
+      const sessionStatusEl = $("session-status");
+      function setSessionStatus(msg, kind) {
+        if (!sessionStatusEl) return;
+        sessionStatusEl.textContent = msg || "";
+        sessionStatusEl.className = kind || "sub";
+      }
+      function fmtSession(s) {
+        if (!s) return "";
+        const st = s.status || "idle";
+        const label = st === "live" ? "LIVE 录制中" : st === "ended" ? "已结束（可回放）" : "未开始";
+        return label + " · " + (s.event_name || "");
+      }
+      async function loadSession() {
+        try {
+          const s = await api("/api/session");
+          if ($("event_name")) $("event_name").value = s.event_name || "";
+          setSessionStatus(fmtSession(s), "ok");
+        } catch (err) {
+          setSessionStatus(String(err.message || err), "err");
+        }
+      }
+      $("event-name-form")?.addEventListener("submit", async (ev) => {
+        ev.preventDefault();
+        try {
+          const s = await api("/api/session/event-name", {
+            method: "PUT",
+            body: JSON.stringify({ name: $("event_name").value.trim() }),
+          });
+          setSessionStatus("已保存 · " + fmtSession(s), "ok");
+        } catch (err) {
+          setSessionStatus(String(err.message || err), "err");
+        }
+      });
+      $("btn-session-start")?.addEventListener("click", async () => {
+        try {
+          const s = await api("/api/session/start", { method: "POST", body: "{}" });
+          setSessionStatus(fmtSession(s), "ok");
+        } catch (err) {
+          setSessionStatus(String(err.message || err), "err");
+        }
+      });
+      $("btn-session-end")?.addEventListener("click", async () => {
+        try {
+          const s = await api("/api/session/end", { method: "POST", body: "{}" });
+          setSessionStatus(fmtSession(s), "ok");
+        } catch (err) {
+          setSessionStatus(String(err.message || err), "err");
+        }
+      });
+      $("btn-session-reset")?.addEventListener("click", async () => {
+        if (!confirm("清空本场轨迹并回到未开始？名单和 GPX 不会动。")) return;
+        try {
+          const s = await api("/api/session/reset", { method: "POST", body: "{}" });
+          setSessionStatus(fmtSession(s), "ok");
+        } catch (err) {
+          setSessionStatus(String(err.message || err), "err");
+        }
+      });
+      $("btn-session-reload")?.addEventListener("click", () => loadSession());
+      loadSession();
+
+
       loadListColumns();
 
       // --- GPX upload ---

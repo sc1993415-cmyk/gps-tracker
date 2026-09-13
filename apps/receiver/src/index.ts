@@ -39,6 +39,13 @@ import {
   type CourseIndex,
 } from "course-project";
 import { checkJump, type AcceptedFix } from "./jump-filter.ts";
+import {
+  loadEventName,
+  getSession,
+  isSessionLive,
+  setSessionReloadHandler,
+  setSessionTrailClearer,
+} from "./session.ts";
 import { isDeviceOnline } from "./device-sessions.ts";
 
 /** No packet / no TCP within this window → offline (covers ~5min standby heartbeat). */
@@ -85,7 +92,7 @@ type ProjState = { sPrev: number; lap: number };
 const projByParticipant = new Map<string, ProjState>();
 
 const state: OverlayState = {
-  event: { name: demo ? "演示赛" : "实时追踪" },
+  event: { name: demo ? "演示赛" : "Race Live" },
   course: demo ? DEMO_COURSE : null,
   participants: {},
   mapStyle: undefined,
@@ -131,6 +138,10 @@ function applyUploadedCourse(result: GpxParseResult & { paths: string[] }) {
 
 loadRoster();
 loadDiscovery();
+loadEventName();
+if (!demo) {
+  state.event = { name: getSession().event_name };
+}
 loadMapStyle();
 loadListColumns();
 
@@ -373,6 +384,12 @@ function applyCourseProjection(
   return { lat: result.proj.lat, lng: result.proj.lng };
 }
 
+function clearAllSessionTrails() {
+  for (const p of Object.values(state.participants)) {
+    p.trail = [];
+  }
+}
+
 function applyTelemetry(athlete: Telemetry) {
   const prev = lastAcceptedFix.get(athlete.device_id);
   if (prev) {
@@ -402,19 +419,23 @@ function applyTelemetry(athlete: Telemetry) {
 
   const p = ensureParticipant(athlete);
   const onCourse = applyCourseProjection(p);
-  // RaceMap-style: draw trail on GPX when available; marker still uses raw athlete lat/lng.
-  const trailMode = (process.env.GPS_TRAIL_MODE || "projected").toLowerCase();
-  const useProj = trailMode !== "raw" && onCourse;
-  pushTrailPoint(p.trail, {
-    lat: useProj ? onCourse!.lat : athlete.lat,
-    lng: useProj ? onCourse!.lng : athlete.lng,
-    alt_baro: athlete.alt_baro,
-    ts: athlete.ts,
-  });
+  // Session recording: only append trail after Start (RaceMap-style projected when GPX present).
+  if (isSessionLive()) {
+    const trailMode = (process.env.GPS_TRAIL_MODE || "projected").toLowerCase();
+    const useProj = trailMode !== "raw" && onCourse;
+    pushTrailPoint(p.trail, {
+      lat: useProj ? onCourse!.lat : athlete.lat,
+      lng: useProj ? onCourse!.lng : athlete.lng,
+      alt_baro: athlete.alt_baro,
+      ts: Date.now(),
+    });
+  }
 }
 
 function emitState() {
   refreshAllFixStatuses();
+  const sess = getSession();
+  if (!demo) state.event = { name: sess.event_name };
   state.mapStyle = getMapStyle();
   state.listColumns = getListColumns().map(({ id, enabled }) => ({ id, enabled }));
   broadcast({
@@ -423,6 +444,7 @@ function emitState() {
     participants: cloneParticipants(state.participants),
     mapStyle: state.mapStyle,
     listColumns: state.listColumns,
+    session: sess,
   });
 }
 
@@ -450,6 +472,9 @@ function reapplyRosterToParticipants() {
 setRosterReloadHandler(reapplyRosterToParticipants);
 setMapStyleReloadHandler(() => emitState());
 setListColumnsReloadHandler(() => emitState());
+setSessionReloadHandler(() => emitState());
+
+setSessionTrailClearer(clearAllSessionTrails);
 
 if (demo) {
   console.log("[demo] publishing ~1Hz fake telemetry for 3 athletes");

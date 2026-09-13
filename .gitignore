@@ -2,6 +2,7 @@
 apps/receiver/data/roster.json
 apps/receiver/data/discovered.json
 apps/receiver/data/course.geojson
+apps/receiver/data/event-name.json
 apps/receiver/data/*.bak*
 apps/overlay/public/course.geojson
 node_modules/

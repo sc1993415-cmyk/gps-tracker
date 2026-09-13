@@ -33,6 +33,13 @@ import {
   LIST_COLUMN_LABELS,
 } from "./list-columns.ts";
 import { uploadGpx } from "./gpx.ts";
+import {
+  getSession,
+  setEventName,
+  startSession,
+  endSession,
+  resetSession,
+} from "./session.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ADMIN_HTML = path.resolve(__dirname, "../public/admin.html");
@@ -283,6 +290,34 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
         return;
       }
 
+      if (url.pathname === "/api/session" && method === "GET") {
+        sendJson(res, 200, getSession());
+        return;
+      }
+
+      if (url.pathname === "/api/session/event-name" && (method === "PUT" || method === "POST")) {
+        const raw = (await readBody(req)).toString("utf8");
+        const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        const name = body.name ?? body.event_name ?? body.eventName;
+        sendJson(res, 200, setEventName(String(name ?? "")));
+        return;
+      }
+
+      if (url.pathname === "/api/session/start" && method === "POST") {
+        sendJson(res, 200, startSession());
+        return;
+      }
+
+      if (url.pathname === "/api/session/end" && method === "POST") {
+        sendJson(res, 200, endSession());
+        return;
+      }
+
+      if (url.pathname === "/api/session/reset" && method === "POST") {
+        sendJson(res, 200, resetSession());
+        return;
+      }
+
       if (url.pathname === "/api/devices/online" && method === "GET") {
         sendJson(res, 200, { online: listOnlineDevices() });
         return;
@@ -343,7 +378,7 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
 
   server.listen(port, () => {
     console.log(
-      `[admin] UI http://localhost:${port}/  (API /api/roster /api/roster.csv /api/discovered /api/command /api/map-style /api/list-columns /api/course/gpx)`
+      `[admin] UI http://localhost:${port}/  (API /api/session /api/roster /api/discovered /api/command /api/map-style /api/list-columns /api/course/gpx)`
     );
   });
   server.on("error", (err) => {

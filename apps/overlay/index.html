@@ -29,16 +29,36 @@
       }
       #event-name { font: 700 18px/1.2 system-ui, sans-serif; letter-spacing: 0.02em; }
       #live-badge {
-        display: inline-flex; align-items: center; gap: 6px;
+        display: none; align-items: center; gap: 6px;
         background: #ff3b5c; color: #fff;
         font: 700 11px/1 system-ui, sans-serif;
         padding: 4px 8px; border-radius: 4px; letter-spacing: 0.08em;
       }
+      #live-badge.show { display: inline-flex; }
+      #live-badge.replay { background: #5b7cfa; }
+      #live-badge.replay::before { animation: none; opacity: 0.85; }
       #live-badge::before {
         content: ""; width: 6px; height: 6px; border-radius: 50%;
         background: #fff; box-shadow: 0 0 6px #fff;
         animation: pulse 1.2s ease-in-out infinite;
       }
+      #playback-bar {
+        display: none; position: absolute; left: 50%; bottom: 88px; z-index: 6;
+        transform: translateX(-50%);
+        align-items: center; gap: 10px;
+        padding: 8px 12px; border-radius: 10px;
+        background: rgba(8,12,18,0.88); color: #fff;
+        backdrop-filter: blur(10px);
+        font: 500 12px system-ui, sans-serif;
+        pointer-events: auto;
+      }
+      #playback-bar.show { display: flex; }
+      #playback-bar input[type=range] { width: min(42vw, 320px); }
+      #playback-bar button {
+        border: 0; border-radius: 6px; padding: 6px 10px; cursor: pointer;
+        background: rgba(255,255,255,0.12); color: #fff; font: 600 12px system-ui, sans-serif;
+      }
+      #playback-bar button.active { background: #5b7cfa; }
       @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
       #list-panel {
         position: absolute; top: 52px; left: 12px; bottom: 110px; z-index: 5;
@@ -130,8 +150,16 @@
   <body>
     <div id="map"></div>
     <div id="top-bar">
-      <div id="event-name">直播</div>
-      <div id="live-badge">直播</div>
+      <div id="event-name">Race Live</div>
+      <div id="live-badge">LIVE</div>
+    </div>
+    <div id="playback-bar">
+      <button type="button" id="pb-toggle">播放</button>
+      <input id="pb-scrub" type="range" min="0" max="1000" value="0" />
+      <span id="pb-time">0:00</span>
+      <button type="button" class="pb-speed active" data-speed="1">1×</button>
+      <button type="button" class="pb-speed" data-speed="2">2×</button>
+      <button type="button" class="pb-speed" data-speed="5">5×</button>
     </div>
     <aside id="list-panel">
       <div class="list-header">

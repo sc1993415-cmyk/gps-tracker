@@ -32,6 +32,15 @@ export type Participant = {
 };
 
 /** Multi-athlete live overlay payload (Phase 1). */
+export type SessionStatus = "idle" | "live" | "ended";
+
+export type SessionInfo = {
+  status: SessionStatus;
+  event_name: string;
+  started_ms?: number;
+  ended_ms?: number;
+};
+
 export type OverlayState = {
   event?: { name: string };
   course?: CourseFeature | null;
@@ -40,6 +49,8 @@ export type OverlayState = {
   mapStyle?: { id: string; url: string };
   /** Athlete list column visibility for overlay. */
   listColumns?: { id: string; enabled: boolean }[];
+  /** Live session: start/end/reset recording for playback. */
+  session?: SessionInfo;
 };
 
 /** Legacy single-athlete shape (kept for docs / shim reference). */

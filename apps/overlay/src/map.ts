@@ -35,6 +35,10 @@ export type MapController = {
       follow: boolean;
       hideNonSelected: boolean;
       courseOverride?: CourseFeature | null;
+      /** When set, draw trails (live/ended session). Idle → no session trail. */
+      showTrails?: boolean;
+      /** Playback: override marker lat/lng by participant id. */
+      positionOverrides?: Record<string, { lat: number; lng: number }>;
     }
   ) => void;
   setFollow: (follow: boolean) => void;
@@ -228,15 +232,16 @@ export function createMap(
           flag.style.display = isSelected ? "block" : "none";
         }
 
-        rt.targetLng = p.athlete.lng;
-        rt.targetLat = p.athlete.lat;
+        const ov = opts.positionOverrides?.[p.id];
+        rt.targetLng = ov ? ov.lng : p.athlete.lng;
+        rt.targetLat = ov ? ov.lat : p.athlete.lat;
         const dLng = Math.abs(rt.targetLng - rt.displayLng);
         const dLat = Math.abs(rt.targetLat - rt.displayLat);
         if (dLng > LERP_EPSILON || dLat > LERP_EPSILON) {
           startOrRestartLerp(rt);
         }
 
-        if (visible && p.trail.length >= 2) {
+        if (opts.showTrails !== false && visible && p.trail.length >= 2) {
           trailFeatures.push({
             type: "Feature",
             properties: { color, id: p.id, selected: isSelected ? 1 : 0 },
@@ -263,8 +268,9 @@ export function createMap(
       if (followSelected && selectedId) {
         const sel = state.participants[selectedId];
         if (sel) {
+          const ov = opts.positionOverrides?.[selectedId];
           map.easeTo({
-            center: [sel.athlete.lng, sel.athlete.lat],
+            center: [ov ? ov.lng : sel.athlete.lng, ov ? ov.lat : sel.athlete.lat],
             duration: MARKER_LERP_MS,
           });
         }

@@ -1,5 +1,5 @@
 import "maplibre-gl/dist/maplibre-gl.css";
-import { connectOverlayWs, type OverlayState, type Participant } from "./ws";
+import { connectOverlayWs, type OverlayState, type Participant, type TrailPoint } from "./ws";
 
 import { createMap, OPENFREEMAP_STYLES } from "./map";
 import { loadCourse } from "./course";
@@ -52,6 +52,11 @@ if (params.largeMode) root.classList.add("large-mode");
 if (params.mapOnly) root.classList.add("map-only");
 
 const eventNameEl = document.querySelector("#event-name")!;
+const liveBadgeEl = document.querySelector("#live-badge") as HTMLElement;
+const playbackBar = document.querySelector("#playback-bar") as HTMLElement;
+const pbToggle = document.querySelector("#pb-toggle") as HTMLButtonElement | null;
+const pbScrub = document.querySelector("#pb-scrub") as HTMLInputElement | null;
+const pbTime = document.querySelector("#pb-time") as HTMLElement | null;
 const listEl = document.querySelector("#participant-list")!;
 const listPanel = document.querySelector("#list-panel")!;
 const toggleBtn = document.querySelector("#list-toggle") as HTMLButtonElement;
@@ -249,23 +254,183 @@ function renderHud(p: Participant | null) {
   climbEl.textContent = `${Math.round(p.athlete.climb)}`;
 }
 
+
+type PlaybackState = {
+  playing: boolean;
+  speed: number;
+  /** ms along session [t0, t1] */
+  cursorMs: number;
+  t0: number;
+  t1: number;
+  lastFrameMs: number;
+  raf: number;
+};
+
+let playback: PlaybackState | null = null;
+
+function sessionStatus(state: OverlayState) {
+  return state.session?.status || "idle";
+}
+
+function collectSessionRange(state: OverlayState): { t0: number; t1: number } | null {
+  let t0 = Infinity;
+  let t1 = -Infinity;
+  for (const p of Object.values(state.participants)) {
+    for (const pt of p.trail || []) {
+      if (typeof pt.ts !== "number") continue;
+      if (pt.ts < t0) t0 = pt.ts;
+      if (pt.ts > t1) t1 = pt.ts;
+    }
+  }
+  if (!Number.isFinite(t0) || !Number.isFinite(t1) || t1 <= t0) return null;
+  return { t0, t1 };
+}
+
+function interpTrail(trail: TrailPoint[], t: number): { lat: number; lng: number } | null {
+  if (!trail?.length) return null;
+  if (t <= trail[0]!.ts) return { lat: trail[0]!.lat, lng: trail[0]!.lng };
+  const last = trail[trail.length - 1]!;
+  if (t >= last.ts) return { lat: last.lat, lng: last.lng };
+  for (let i = 1; i < trail.length; i++) {
+    const a = trail[i - 1]!;
+    const b = trail[i]!;
+    if (t <= b.ts) {
+      const span = Math.max(1, b.ts - a.ts);
+      const u = (t - a.ts) / span;
+      return {
+        lat: a.lat + (b.lat - a.lat) * u,
+        lng: a.lng + (b.lng - a.lng) * u,
+      };
+    }
+  }
+  return { lat: last.lat, lng: last.lng };
+}
+
+function formatPbTime(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  return m + ":" + String(r).padStart(2, "0");
+}
+
+function ensurePlayback(state: OverlayState) {
+  const range = collectSessionRange(state);
+  if (!range) {
+    playback = null;
+    return;
+  }
+  if (!playback || playback.t0 !== range.t0 || playback.t1 !== range.t1) {
+    playback = {
+      playing: false,
+      speed: playback?.speed || 1,
+      cursorMs: range.t0,
+      t0: range.t0,
+      t1: range.t1,
+      lastFrameMs: performance.now(),
+      raf: 0,
+    };
+  }
+}
+
+function stopPlaybackRaf() {
+  if (playback?.raf) {
+    cancelAnimationFrame(playback.raf);
+    playback.raf = 0;
+  }
+}
+
+function playbackTick(now: number) {
+  if (!playback || !playback.playing) return;
+  const dt = now - playback.lastFrameMs;
+  playback.lastFrameMs = now;
+  playback.cursorMs = Math.min(
+    playback.t1,
+    playback.cursorMs + dt * playback.speed
+  );
+  if (playback.cursorMs >= playback.t1) {
+    playback.playing = false;
+    if (pbToggle) pbToggle.textContent = "播放";
+  }
+  syncPlaybackUi();
+  render();
+  if (playback.playing) {
+    playback.raf = requestAnimationFrame(playbackTick);
+  }
+}
+
+function syncPlaybackUi() {
+  if (!playback) return;
+  const span = Math.max(1, playback.t1 - playback.t0);
+  if (pbScrub) {
+    pbScrub.value = String(Math.round(((playback.cursorMs - playback.t0) / span) * 1000));
+  }
+  if (pbTime) pbTime.textContent = formatPbTime(playback.cursorMs - playback.t0);
+  if (pbToggle) pbToggle.textContent = playback.playing ? "暂停" : "播放";
+}
+
+function updateLiveBadge(state: OverlayState) {
+  const st = sessionStatus(state);
+  if (!liveBadgeEl) return;
+  liveBadgeEl.classList.remove("show", "replay");
+  if (st === "live") {
+    liveBadgeEl.textContent = "LIVE";
+    liveBadgeEl.classList.add("show");
+  } else if (st === "ended") {
+    liveBadgeEl.textContent = "REPLAY";
+    liveBadgeEl.classList.add("show", "replay");
+  }
+}
+
+
 function render() {
   const state = latest;
-  eventNameEl.textContent = state.event?.name || "直播";
+  const st = sessionStatus(state);
+  eventNameEl.textContent = state.session?.event_name || state.event?.name || "Race Live";
+  updateLiveBadge(state);
+
+  if (st === "ended") {
+    ensurePlayback(state);
+    playbackBar?.classList.add("show");
+    syncPlaybackUi();
+  } else {
+    stopPlaybackRaf();
+    playback = null;
+    playbackBar?.classList.remove("show");
+  }
+
   selectedId = resolveSelection(state);
   const participants = Object.values(state.participants);
   renderList(participants, selectedId, state);
-  const sel = selectedId ? state.participants[selectedId] ?? null : null;
-  renderHud(sel);
+
+  let positionOverrides: Record<string, { lat: number; lng: number }> | undefined;
+  let hudParticipant: Participant | null = selectedId ? state.participants[selectedId] ?? null : null;
+
+  if (st === "ended" && playback) {
+    positionOverrides = {};
+    for (const p of participants) {
+      const pos = interpTrail(p.trail || [], playback.cursorMs);
+      if (pos) positionOverrides[p.id] = pos;
+    }
+    if (hudParticipant && positionOverrides[hudParticipant.id]) {
+      const pos = positionOverrides[hudParticipant.id]!;
+      hudParticipant = {
+        ...hudParticipant,
+        athlete: { ...hudParticipant.athlete, lat: pos.lat, lng: pos.lng, speed: 0 },
+      };
+    }
+  }
+
+  renderHud(hudParticipant);
   const mapState = stylePinnedByHash
     ? { ...state, mapStyle: undefined }
     : state;
   map.update(mapState, {
     selectedId,
-    follow: true,
+    follow: st !== "ended",
     hideNonSelected: params.hideNonSelected,
-    // Prefer live WS course (e.g. after admin GPX upload); fall back to /course.geojson.
     courseOverride: state.course ?? courseOverride,
+    showTrails: st === "live" || st === "ended",
+    positionOverrides,
   });
 }
 
@@ -273,3 +438,37 @@ connectOverlayWs(params.ws, (state) => {
   latest = state;
   render();
 });
+
+
+pbToggle?.addEventListener("click", () => {
+  if (!playback) return;
+  playback.playing = !playback.playing;
+  playback.lastFrameMs = performance.now();
+  if (playback.playing) {
+    stopPlaybackRaf();
+    playback.raf = requestAnimationFrame(playbackTick);
+  } else {
+    stopPlaybackRaf();
+  }
+  syncPlaybackUi();
+});
+
+pbScrub?.addEventListener("input", () => {
+  if (!playback || !pbScrub) return;
+  const span = Math.max(1, playback.t1 - playback.t0);
+  playback.cursorMs = playback.t0 + (Number(pbScrub.value) / 1000) * span;
+  playback.playing = false;
+  stopPlaybackRaf();
+  syncPlaybackUi();
+  render();
+});
+
+document.querySelectorAll(".pb-speed").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const speed = Number((btn as HTMLElement).getAttribute("data-speed") || "1");
+    if (playback) playback.speed = speed;
+    document.querySelectorAll(".pb-speed").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+  });
+});
+
