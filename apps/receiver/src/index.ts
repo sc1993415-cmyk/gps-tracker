@@ -39,6 +39,7 @@ import {
   type CourseIndex,
 } from "course-project";
 import { checkJump, type AcceptedFix } from "./jump-filter.ts";
+import { checkStaleDeviceTs } from "./stale-ts.ts";
 import {
   loadEventName,
   getSession,
@@ -401,13 +402,24 @@ function clearAllSessionTrails() {
 }
 
 function applyTelemetry(athlete: Telemetry) {
+  const recvMs = Date.now();
   const prev = lastAcceptedFix.get(athlete.device_id);
+  // Drop reconnect buffer / clock rewind: device_ts is filter-only, not the play clock.
+  const stale = checkStaleDeviceTs(athlete.ts, recvMs, prev?.ts);
+  if (stale.drop) {
+    console.warn(
+      `[gps] drop stale id=${athlete.device_id} reason=${stale.reason} ` +
+        `lag_s=${stale.lag_s.toFixed(1)} rewind_s=${stale.rewind_s.toFixed(1)} ` +
+        `device_ts=${new Date(athlete.ts).toISOString()} recv=${new Date(recvMs).toISOString()}`
+    );
+    return;
+  }
   if (prev) {
     const jump = checkJump(prev, {
       lat: athlete.lat,
       lng: athlete.lng,
       ts: athlete.ts,
-      recv_ms: Date.now(),
+      recv_ms: recvMs,
     });
     if (jump.reject) {
       console.warn(
@@ -424,7 +436,7 @@ function applyTelemetry(athlete: Telemetry) {
     lat: athlete.lat,
     lng: athlete.lng,
     ts: athlete.ts,
-    recv_ms: Date.now(),
+    recv_ms: recvMs,
   });
 
   const rawGps = { lat: athlete.lat, lng: athlete.lng };
