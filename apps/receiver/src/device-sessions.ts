@@ -5,12 +5,82 @@ const sockets = new Map<string, net.Socket>();
 /** Commands waiting for the device to reconnect. */
 const pending = new Map<string, string[]>();
 
+export type CmdReceiptStatus = "queued" | "waiting" | "ack" | "timeout";
+
+export type CommandReceipt = {
+  id: string;
+  device_id: string;
+  command: string;
+  /** When the admin/API accepted the send (ms). */
+  created_ms: number;
+  /** When bytes were written to TCP (ms), if ever. */
+  written_ms?: number;
+  /** When a text reply was attached (ms). */
+  reply_ms?: number;
+  reply?: string;
+  status: CmdReceiptStatus;
+  queued: boolean;
+};
+
+const MAX_RECEIPTS = 20;
+/** No plaintext reply within this window → status timeout (not hard failure). */
+const ACK_TIMEOUT_MS = 90_000;
+
+const receipts: CommandReceipt[] = [];
+let receiptSeq = 0;
+
+function refreshReceiptStatuses(now = Date.now()) {
+  for (const r of receipts) {
+    if (r.status === "waiting" && r.written_ms != null && now - r.written_ms > ACK_TIMEOUT_MS) {
+      r.status = "timeout";
+    }
+  }
+}
+
+function pushReceipt(r: CommandReceipt) {
+  receipts.unshift(r);
+  while (receipts.length > MAX_RECEIPTS) receipts.pop();
+}
+
+function markWritten(deviceId: string, raw: string, now = Date.now()) {
+  // Prefer oldest matching queued/waiting without write for this device+command.
+  const hit =
+    [...receipts]
+      .reverse()
+      .find(
+        (r) =>
+          r.device_id === deviceId &&
+          r.command === raw &&
+          r.written_ms == null &&
+          (r.status === "queued" || r.status === "waiting")
+      ) ?? null;
+  if (hit) {
+    hit.written_ms = now;
+    hit.status = "waiting";
+    hit.queued = false;
+    return hit;
+  }
+  // Orphan flush (shouldn't happen often): still record.
+  const r: CommandReceipt = {
+    id: `cmd-${++receiptSeq}`,
+    device_id: deviceId,
+    command: raw,
+    created_ms: now,
+    written_ms: now,
+    status: "waiting",
+    queued: false,
+  };
+  pushReceipt(r);
+  return r;
+}
+
+export function listCommandReceipts(): CommandReceipt[] {
+  refreshReceiptStatuses();
+  return receipts.map((r) => ({ ...r }));
+}
+
 export function bindDeviceSocket(deviceId: string, socket: net.Socket) {
   if (!deviceId) return;
-  const prev = sockets.get(deviceId);
-  if (prev && prev !== socket && !prev.destroyed) {
-    // Newer connection wins.
-  }
   sockets.set(deviceId, socket);
   flushPending(deviceId);
 }
@@ -34,6 +104,17 @@ export function noteDeviceReply(deviceId: string | null | undefined, text: strin
   const t = text.replace(/\r/g, "").trim();
   if (!t) return;
   console.log(`[cmd] reply id=${deviceId || "?"} raw=${JSON.stringify(t)}`);
+  if (!deviceId) return;
+  refreshReceiptStatuses();
+  // Attach to oldest waiting command for this device (FIFO).
+  const hit = [...receipts]
+    .reverse()
+    .find((r) => r.device_id === deviceId && r.status === "waiting" && !r.reply);
+  if (hit) {
+    hit.reply = t;
+    hit.reply_ms = Date.now();
+    hit.status = "ack";
+  }
 }
 
 function flushPending(deviceId: string) {
@@ -45,6 +126,7 @@ function flushPending(deviceId: string) {
   for (const raw of q) {
     console.log(`[cmd] flush id=${deviceId} raw=${JSON.stringify(raw)}`);
     s.write(raw);
+    markWritten(deviceId, raw);
   }
 }
 
@@ -52,16 +134,30 @@ function flushPending(deviceId: string) {
 export function sendRawCommand(
   deviceId: string,
   raw: string
-): { ok: true; queued: boolean } | { ok: false; error: string } {
+): { ok: true; queued: boolean; receipt: CommandReceipt } | { ok: false; error: string } {
   const text = raw.trim();
   if (!deviceId) return { ok: false, error: "device_id required" };
   if (!text) return { ok: false, error: "empty command" };
+
+  const now = Date.now();
+  const receipt: CommandReceipt = {
+    id: `cmd-${++receiptSeq}`,
+    device_id: deviceId,
+    command: text,
+    created_ms: now,
+    status: "queued",
+    queued: true,
+  };
 
   const s = sockets.get(deviceId);
   if (s && !s.destroyed && s.writable) {
     console.log(`[cmd] send id=${deviceId} raw=${JSON.stringify(text)}`);
     s.write(text);
-    return { ok: true, queued: false };
+    receipt.queued = false;
+    receipt.written_ms = now;
+    receipt.status = "waiting";
+    pushReceipt(receipt);
+    return { ok: true, queued: false, receipt };
   }
 
   const q = pending.get(deviceId) ?? [];
@@ -69,7 +165,8 @@ export function sendRawCommand(
   q.push(text);
   pending.set(deviceId, q);
   console.log(`[cmd] queued id=${deviceId} raw=${JSON.stringify(text)}`);
-  return { ok: true, queued: true };
+  pushReceipt(receipt);
+  return { ok: true, queued: true, receipt };
 }
 
 export type Mt909CmdKind = "freq" | "ip" | "cq";

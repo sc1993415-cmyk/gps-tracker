@@ -212,7 +212,7 @@
 
       <div class="panel">
         <h2>设备指令下发（MT909 官方短信原文 → TCP）</h2>
-        <p class="sub" style="margin-top:0">在线设备走 5013 长连接原样下发；离线则排队，重连后自动 flush。回执看 receiver 日志 <code>[cmd] reply</code>。</p>
+        <p class="sub" style="margin-top:0">在线设备走 5013 长连接原样下发；离线则排队，重连后自动 flush。909 未必回明文 OK，超时≠一定失败。</p>
         <form id="cmd-form" class="grid" style="grid-template-columns: 1.2fr 0.7fr 0.7fr 0.9fr 0.6fr auto;" autocomplete="off">
           <label>
             设备号
@@ -245,11 +245,34 @@
           <div class="actions span-all">
             <button type="submit" class="primary">下发</button>
             <button type="button" id="btn-online">刷新在线</button>
+            <button type="button" id="btn-cmd-receipts">回执查看</button>
             <span id="online-status" class="sub" style="margin:0;align-self:center;"></span>
           </div>
         </form>
         <div id="cmd-status"></div>
         <pre id="cmd-preview" class="mono" style="margin:10px 0 0;padding:10px;background:var(--input);border-radius:8px;font-size:12px;color:var(--muted);"></pre>
+        <div id="cmd-receipts-wrap" style="display:none;margin-top:12px;">
+          <div class="actions" style="margin-bottom:8px;">
+            <strong style="align-self:center;">最近回执（最多 20）</strong>
+            <button type="button" id="btn-cmd-receipts-refresh">刷新</button>
+            <button type="button" id="btn-cmd-receipts-hide">收起</button>
+          </div>
+          <div style="overflow:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>设备</th>
+                  <th>发出原文</th>
+                  <th>状态</th>
+                  <th>回包</th>
+                </tr>
+              </thead>
+              <tbody id="cmd-receipts-body"></tbody>
+            </table>
+          </div>
+          <p class="sub" id="cmd-receipts-note" style="margin-top:8px;">超时只表示没收到明文回执，FREQ 成功也可能只表现为上报间隔变了。</p>
+        </div>
       </div>
 
 
@@ -619,6 +642,53 @@
       $("btn-online").addEventListener("click", refreshOnline);
       refreshOnline();
 
+
+      function statusLabel(s) {
+        if (s === "queued") return "已排队";
+        if (s === "waiting") return "已写出 · 等待回执";
+        if (s === "ack") return "有回执";
+        if (s === "timeout") return "超时（未必失败）";
+        return s || "—";
+      }
+      function fmtMs(ms) {
+        if (!ms) return "—";
+        try {
+          return new Date(ms).toLocaleString("zh-CN", { hour12: false });
+        } catch (_) { return String(ms); }
+      }
+      async function loadCmdReceipts() {
+        const wrap = $("cmd-receipts-wrap");
+        const body = $("cmd-receipts-body");
+        if (!wrap || !body) return;
+        wrap.style.display = "block";
+        try {
+          const data = await api("/api/command/receipts");
+          const list = data.receipts || [];
+          if (!list.length) {
+            body.innerHTML = '<tr><td colspan="5" class="sub">暂无记录（下发后会出现在这里）</td></tr>';
+            return;
+          }
+          body.innerHTML = list.map((r) => {
+            const reply = r.reply ? escapeHtml(r.reply) : (r.status === "timeout" ? "—" : (r.status === "queued" ? "—" : "等待中…"));
+            return `<tr>
+              <td>${escapeHtml(fmtMs(r.created_ms))}</td>
+              <td class="mono">${escapeHtml(r.device_id || "")}</td>
+              <td class="mono">${escapeHtml(r.command || "")}</td>
+              <td>${escapeHtml(statusLabel(r.status))}</td>
+              <td class="mono">${reply}</td>
+            </tr>`;
+          }).join("");
+        } catch (err) {
+          body.innerHTML = `<tr><td colspan="5" class="err">${escapeHtml(String(err.message || err))}</td></tr>`;
+        }
+      }
+      $("btn-cmd-receipts")?.addEventListener("click", () => loadCmdReceipts());
+      $("btn-cmd-receipts-refresh")?.addEventListener("click", () => loadCmdReceipts());
+      $("btn-cmd-receipts-hide")?.addEventListener("click", () => {
+        const wrap = $("cmd-receipts-wrap");
+        if (wrap) wrap.style.display = "none";
+      });
+
       $("cmd-form").addEventListener("submit", async (ev) => {
         ev.preventDefault();
         const kind = $("cmd_kind").value;
@@ -635,6 +705,9 @@
           const data = await api("/api/command", { method: "POST", body: JSON.stringify(body) });
           const q = data.queued ? "（已排队，等设备上线）" : "（已写入 TCP）";
           setCmdStatus(`已下发 ${data.command} ${q}`, "ok");
+          if ($("cmd-receipts-wrap") && $("cmd-receipts-wrap").style.display !== "none") {
+            loadCmdReceipts();
+          }
           refreshOnline();
         } catch (err) {
           setCmdStatus(err.message || String(err), "err");

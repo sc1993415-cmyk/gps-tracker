@@ -20,6 +20,7 @@ import {
   sendRawCommand,
   listOnlineDevices,
   isDeviceOnline,
+  listCommandReceipts,
   type Mt909CmdKind,
 } from "./device-sessions.ts";
 import {
@@ -337,6 +338,11 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
         return;
       }
 
+      if (url.pathname === "/api/command/receipts" && method === "GET") {
+        sendJson(res, 200, { receipts: listCommandReceipts() });
+        return;
+      }
+
       if (url.pathname === "/api/command" && method === "POST") {
         const raw = (await readBody(req)).toString("utf8");
         const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
@@ -379,6 +385,7 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
           command: commandText,
           online: isDeviceOnline(deviceId),
           queued: result.queued,
+          receipt: result.receipt,
         });
         return;
       }
@@ -392,7 +399,7 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
 
   server.listen(port, () => {
     console.log(
-      `[admin] UI http://localhost:${port}/  (API /api/session /api/roster /api/discovered /api/command /api/map-style /api/list-columns /api/course/gpx)`
+      `[admin] UI http://localhost:${port}/  (API /api/session /api/roster /api/discovered /api/command /api/command/receipts /api/map-style /api/list-columns /api/course/gpx)`
     );
   });
   server.on("error", (err) => {
