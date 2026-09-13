@@ -333,6 +333,9 @@ export function startH02TcpServer(
     let lockedFrameLen = 0;
     let boundId: string | null = null;
     const remote = `${socket.remoteAddress}:${socket.remotePort}`;
+    // Probe dead peers; we do NOT idle-kick — ~4min drops are carrier/device side.
+    socket.setKeepAlive(true, 30_000);
+    socket.setTimeout(0);
     console.log(`[h02] connect ${remote}`);
 
     const bindId = (id: string) => {
