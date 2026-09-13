@@ -44,7 +44,7 @@
       }
       form.grid {
         display: grid;
-        grid-template-columns: 1.4fr 0.6fr 1fr 0.7fr auto;
+        grid-template-columns: 1.1fr 1.1fr 0.5fr 0.9fr 0.6fr auto;
         gap: 10px;
         align-items: end;
       }
@@ -134,14 +134,18 @@
   <body>
     <div class="wrap">
       <h1>选手名册</h1>
-      <p class="sub">将 MT909 IMEI（<code>device_id</code>）绑定到 号码牌 / 姓名 / 颜色。保存后写入 <code>roster.json</code> 并热重载接收端。</p>
+      <p class="sub">主键用 H02 设备号（如 <code>7026238813</code>），可选填贴纸 IMEI 别名。陌生设备进「待确认」后一键添加。支持 CSV 导入导出。</p>
 
       <div class="panel">
         <h2>添加 / 编辑</h2>
         <form id="form" class="grid" autocomplete="off">
-          <label class="span-all">
-            设备号 (IMEI)
-            <input id="device_id" type="text" required placeholder="8638… 或 demo-1" />
+          <label>
+            H02 设备号
+            <input id="device_id" type="text" required placeholder="7026238813" />
+          </label>
+          <label>
+            IMEI 别名（可选）
+            <input id="imei" type="text" placeholder="15 位贴纸号" />
           </label>
           <label>
             号码牌
@@ -253,6 +257,33 @@
         <div id="gpx-status"></div>
       </div>
 
+
+      <div class="panel">
+        <h2>待确认设备（自动发现）</h2>
+        <p class="sub" style="margin-top:0">陌生 H02 ID 解析成功且坐标合理、见到 ≥3 次后出现在此。不进直播图；一键添加后改姓名即可。可忽略脏 ID。</p>
+        <div class="actions" style="margin-bottom:10px">
+          <button type="button" id="btn-discovered-reload">刷新待确认</button>
+        </div>
+        <div id="discovered-wrap"><p class="empty">加载中…</p></div>
+        <div id="discovered-status"></div>
+      </div>
+
+      <div class="panel">
+        <h2>名单导入 / 导出</h2>
+        <p class="sub" style="margin-top:0">CSV 列：<code>device_id,imei,bib,name,color</code>。导出后批量改再导回；默认合并，勾选可整表替换。</p>
+        <div class="actions">
+          <a class="primary" id="btn-csv-export" href="/api/roster.csv" style="display:inline-flex;align-items:center;text-decoration:none;padding:10px 16px;border-radius:8px;">导出 CSV</a>
+          <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="file" id="csv_file" accept=".csv,text/csv" />
+          </label>
+          <label style="display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;">
+            <input type="checkbox" id="csv_replace" /> 整表替换
+          </label>
+          <button type="button" class="primary" id="btn-csv-import">导入</button>
+        </div>
+        <div id="csv-status"></div>
+      </div>
+
       <div class="panel">
         <h2>当前名册</h2>
         <div id="list-wrap">
@@ -271,6 +302,7 @@
 
       function fillForm(entry) {
         $("device_id").value = entry?.device_id || "";
+        $("imei").value = entry?.imei || "";
         $("bib").value = entry?.bib || "";
         $("name").value = entry?.name || "";
         $("color").value = entry?.color || "#ff3b5c";
@@ -301,7 +333,8 @@
           <table>
             <thead>
               <tr>
-                <th>设备号 (IMEI)</th>
+                <th>H02 设备号</th>
+                <th>IMEI</th>
                 <th>号码牌</th>
                 <th>姓名</th>
                 <th>颜色</th>
@@ -312,6 +345,7 @@
               ${list.map((e) => `
                 <tr data-id="${encodeURIComponent(e.device_id)}">
                   <td class="mono">${escapeHtml(e.device_id)}</td>
+                  <td class="mono">${escapeHtml(e.imei || "")}</td>
                   <td>${escapeHtml(e.bib || "")}</td>
                   <td>${escapeHtml(e.name || "")}</td>
                   <td><span class="swatch" style="background:${escapeAttr(e.color || "#ff3b5c")}"></span>${escapeHtml(e.color || "")}</td>
@@ -357,6 +391,94 @@
         return escapeHtml(s).replace(/'/g, "&#39;");
       }
 
+      
+      function setDiscoveredStatus(msg, kind) {
+        const el = $("discovered-status");
+        if (!el) return;
+        el.textContent = msg || "";
+        el.className = kind || "";
+      }
+
+      function renderDiscovered(list) {
+        const wrap = $("discovered-wrap");
+        if (!list || !list.length) {
+          wrap.innerHTML = '<p class="empty">暂无待确认设备。新硬件连上并上报合理坐标后会出现在这里。</p>';
+          return;
+        }
+        const fmt = (ms) => {
+          try { return new Date(ms).toLocaleString("zh-CN", { hour12: false }); } catch { return String(ms); }
+        };
+        wrap.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>设备号</th>
+                <th>次数</th>
+                <th>最后坐标</th>
+                <th>最后见到</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${list.map((d) => `
+                <tr data-id="${encodeURIComponent(d.device_id)}">
+                  <td class="mono">${escapeHtml(d.device_id)}</td>
+                  <td>${d.hits}</td>
+                  <td class="mono">${Number(d.last_lat).toFixed(5)}, ${Number(d.last_lng).toFixed(5)}</td>
+                  <td>${escapeHtml(fmt(d.last_seen_ms))}</td>
+                  <td class="row-actions">
+                    <button type="button" class="primary" data-act="accept">一键添加</button>
+                    <button type="button" data-act="dismiss">忽略</button>
+                  </td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        `;
+        wrap.querySelectorAll("button[data-act]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const tr = btn.closest("tr");
+            const id = decodeURIComponent(tr.getAttribute("data-id"));
+            try {
+              if (btn.getAttribute("data-act") === "accept") {
+                const res = await api(`/api/discovered/${encodeURIComponent(id)}/accept`, {
+                  method: "POST",
+                  body: JSON.stringify({ name: id, color: "#ff9800" }),
+                });
+                setDiscoveredStatus(`已添加 ${id}，请改姓名/号码牌`, "ok");
+                fillForm(res.added || { device_id: id });
+                await reload();
+                await loadDiscovered();
+              } else {
+                const next = await api(`/api/discovered/${encodeURIComponent(id)}`, { method: "DELETE" });
+                setDiscoveredStatus(`已忽略 ${id}`, "ok");
+                renderDiscovered(next);
+              }
+            } catch (err) {
+              setDiscoveredStatus(String(err.message || err), "err");
+            }
+          });
+        });
+      }
+
+      async function loadDiscovered() {
+        try {
+          const list = await api("/api/discovered");
+          renderDiscovered(list);
+          setDiscoveredStatus(list.length ? `待确认 ${list.length} 台` : "无待确认", "ok");
+        } catch (err) {
+          setDiscoveredStatus(String(err.message || err), "err");
+        }
+      }
+
+      function setCsvStatus(msg, kind) {
+        const el = $("csv-status");
+        if (!el) return;
+        el.textContent = msg || "";
+        el.className = kind || "";
+      }
+
+
       async function reload() {
         try {
           const list = await api("/api/roster");
@@ -371,12 +493,13 @@
         ev.preventDefault();
         const entry = {
           device_id: $("device_id").value.trim(),
+          imei: $("imei").value.trim(),
           bib: $("bib").value.trim(),
           name: $("name").value.trim(),
           color: $("color").value,
         };
         if (!entry.device_id) {
-          setStatus("设备号 (IMEI) 为必填项", "err");
+          setStatus("H02 设备号为必填项", "err");
           return;
         }
         try {
@@ -397,7 +520,29 @@
       });
       $("btn-reload").addEventListener("click", reload);
 
+
+      $("btn-discovered-reload")?.addEventListener("click", () => loadDiscovered());
+      $("btn-csv-import")?.addEventListener("click", async () => {
+        const file = $("csv_file")?.files?.[0];
+        if (!file) { setCsvStatus("请先选择 CSV 文件", "err"); return; }
+        try {
+          const text = await file.text();
+          const mode = $("csv_replace")?.checked ? "replace" : "merge";
+          const list = await api("/api/roster/import?mode=" + mode, {
+            method: "POST",
+            headers: { "Content-Type": "text/csv" },
+            body: text,
+          });
+          setCsvStatus(`已导入，当前 ${list.length} 条`, "ok");
+          render(list);
+          await loadDiscovered();
+        } catch (err) {
+          setCsvStatus(String(err.message || err), "err");
+        }
+      });
+
       reload();
+      loadDiscovered();
     
       // --- MT909 command downlink ---
       const cmdStatus = $("cmd-status");

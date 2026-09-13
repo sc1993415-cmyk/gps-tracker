@@ -7,8 +7,14 @@ import {
   loadRoster,
   getRoster,
   getRosterEntry,
+  resolveRosterEntry,
   setRosterReloadHandler,
 } from "./roster.ts";
+import {
+  loadDiscovery,
+  noteUnknownSighting,
+  clearDiscoveredOnRoster,
+} from "./discovery.ts";
 import {
   loadMapStyle,
   getMapStyle,
@@ -123,6 +129,7 @@ function applyUploadedCourse(result: GpxParseResult & { paths: string[] }) {
 }
 
 loadRoster();
+loadDiscovery();
 loadMapStyle();
 loadListColumns();
 
@@ -146,7 +153,7 @@ startAdminServer(Number(process.env.ADMIN_PORT) || 8790);
 
 /** Merge roster bib/name/color onto an existing or new participant. */
 function applyRosterFields(p: Participant, deviceId: string) {
-  const entry = getRosterEntry(deviceId);
+  const entry = resolveRosterEntry(deviceId) ?? getRosterEntry(deviceId);
   if (entry) {
     if (entry.bib) p.bib = entry.bib;
     if (entry.name) p.name = entry.name;
@@ -199,7 +206,7 @@ function colorForId(id: string): string {
 
 function allowDevice(deviceId: string): boolean {
   if (getRoster().length === 0) return true;
-  return !!getRosterEntry(deviceId);
+  return !!resolveRosterEntry(deviceId);
 }
 
 function refreshFixStatus(p: Participant, now = Date.now()) {
@@ -235,7 +242,7 @@ function ensurePresenceParticipant(deviceId: string): Participant {
   deviceToParticipant.set(deviceId, id);
   let p = state.participants[id];
   if (!p) {
-    const entry = getRosterEntry(deviceId);
+    const entry = resolveRosterEntry(deviceId) ?? getRosterEntry(deviceId);
     p = {
       id,
       bib: entry?.bib || id.slice(-4),
@@ -419,6 +426,7 @@ function cloneParticipants(src: Record<string, Participant>): Record<string, Par
 /** After admin save: re-merge roster onto live participants and push WS. */
 function reapplyRosterToParticipants() {
   pruneParticipantsNotInRoster();
+  for (const e of getRoster()) clearDiscoveredOnRoster(e.device_id);
   seedRosterParticipants();
   for (const [deviceId, participantId] of deviceToParticipant) {
     const p = state.participants[participantId];
@@ -454,6 +462,7 @@ if (demo) {
   startH02TcpServer(
     (t) => {
       if (!allowDevice(t.device_id)) {
+        noteUnknownSighting(t.device_id, t.lat, t.lng);
         console.warn(`[mt909] ignore unknown device_id=${t.device_id}`);
         return;
       }

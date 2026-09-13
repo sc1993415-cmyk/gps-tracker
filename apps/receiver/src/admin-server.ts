@@ -7,7 +7,14 @@ import {
   saveRoster,
   upsertRoster,
   deleteRosterEntry,
+  rosterToCsv,
+  importRosterCsv,
 } from "./roster.ts";
+import {
+  listPendingDiscovered,
+  dismissDiscovered,
+  clearDiscoveredOnRoster,
+} from "./discovery.ts";
 import {
   buildMt909Command,
   sendRawCommand,
@@ -152,6 +159,70 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
         return;
       }
 
+      if (url.pathname === "/api/roster.csv" && method === "GET") {
+        const csv = rosterToCsv();
+        res.writeHead(200, {
+          "Content-Type": "text/csv; charset=utf-8",
+          "Content-Disposition": 'attachment; filename="roster.csv"',
+          "Cache-Control": "no-store",
+          "Access-Control-Allow-Origin": "*",
+        });
+        res.end(csv);
+        return;
+      }
+
+      if (url.pathname === "/api/roster/import" && method === "POST") {
+        const raw = (await readBody(req)).toString("utf8");
+        let text = raw;
+        let mode: "replace" | "merge" = "merge";
+        const ct = String(req.headers["content-type"] || "");
+        if (ct.includes("application/json")) {
+          const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+          text = String(body.csv ?? body.text ?? "");
+          mode = body.mode === "replace" ? "replace" : "merge";
+        } else {
+          mode = url.searchParams.get("mode") === "replace" ? "replace" : "merge";
+        }
+        if (!text.trim()) {
+          sendJson(res, 400, { error: "empty CSV" });
+          return;
+        }
+        const list = importRosterCsv(text, mode);
+        for (const e of list) clearDiscoveredOnRoster(e.device_id);
+        sendJson(res, 200, list);
+        return;
+      }
+
+      if (url.pathname === "/api/discovered" && method === "GET") {
+        sendJson(res, 200, listPendingDiscovered());
+        return;
+      }
+
+      const acceptMatch = url.pathname.match(/^\/api\/discovered\/([^/]+)\/accept$/);
+      if (acceptMatch && method === "POST") {
+        const deviceId = decodeURIComponent(acceptMatch[1]!);
+        const raw = (await readBody(req)).toString("utf8");
+        const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        const entry = {
+          device_id: deviceId,
+          imei: body.imei ? String(body.imei) : undefined,
+          bib: body.bib != null ? String(body.bib) : "",
+          name: body.name != null ? String(body.name) : deviceId,
+          color: body.color != null ? String(body.color) : "#ff9800",
+        };
+        const list = upsertRoster([entry]);
+        clearDiscoveredOnRoster(deviceId);
+        sendJson(res, 200, { roster: list, added: entry });
+        return;
+      }
+
+      const dismissMatch = url.pathname.match(/^\/api\/discovered\/([^/]+)$/);
+      if (dismissMatch && method === "DELETE") {
+        const deviceId = decodeURIComponent(dismissMatch[1]!);
+        sendJson(res, 200, dismissDiscovered(deviceId));
+        return;
+      }
+
       if (url.pathname === "/api/map-style" && method === "GET") {
         sendJson(res, 200, { current: getMapStyle(), options: listMapStyles() });
         return;
@@ -272,7 +343,7 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
 
   server.listen(port, () => {
     console.log(
-      `[admin] UI http://localhost:${port}/  (API /api/roster /api/command /api/map-style /api/list-columns /api/course/gpx)`
+      `[admin] UI http://localhost:${port}/  (API /api/roster /api/roster.csv /api/discovered /api/command /api/map-style /api/list-columns /api/course/gpx)`
     );
   });
   server.on("error", (err) => {
