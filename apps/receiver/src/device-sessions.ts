@@ -91,8 +91,9 @@ export function buildMt909Command(
   if (kind === "freq") {
     const password = (params.password ?? "123456").trim() || "123456";
     const t = Number(params.intervalSec ?? 30);
-    if (!Number.isFinite(t) || t < 10 || t > 3599) {
-      throw new Error("FREQ interval must be 10–3599 seconds");
+    // Vendor says 1s is supported; handbook said 10–3599 — allow ≥1 for livestream.
+    if (!Number.isFinite(t) || t < 1 || t > 3599) {
+      throw new Error("FREQ interval must be 1–3599 seconds");
     }
     return `FREQ,${password},${Math.floor(t)}`;
   }
