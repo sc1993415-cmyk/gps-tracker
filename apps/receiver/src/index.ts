@@ -228,6 +228,7 @@ function applyTelemetry(athlete: Telemetry) {
       lat: athlete.lat,
       lng: athlete.lng,
       ts: athlete.ts,
+      recv_ms: Date.now(),
     });
     if (jump.reject) {
       console.warn(
@@ -253,6 +254,7 @@ function applyTelemetry(athlete: Telemetry) {
     lat: athlete.lat,
     lng: athlete.lng,
     ts: athlete.ts,
+    recv_ms: Date.now(),
   });
 
   const p = ensureParticipant(athlete);
