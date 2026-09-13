@@ -486,7 +486,14 @@ if (demo) {
     },
     port,
     {
-      onInvalid: (deviceId) => {
+      onInvalid: (deviceId, lat, lng) => {
+        if (!isPlausibleDeviceId(deviceId)) return;
+        if (!allowDevice(deviceId)) {
+          if (typeof lat === "number" && typeof lng === "number") {
+            noteUnknownSighting(deviceId, lat, lng);
+          }
+          return;
+        }
         touchPresence(deviceId, { zeroSpeed: true });
       },
       onPresence: (deviceId) => {

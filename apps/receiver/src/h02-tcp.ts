@@ -319,7 +319,7 @@ export function startH02TcpServer(
     5013,
   opts: {
     sendAck?: boolean;
-    onInvalid?: (deviceId: string) => void;
+    onInvalid?: (deviceId: string, lat?: number, lng?: number) => void;
     /** Any non-position uplink (heartbeat / short keep-alive). */
     onPresence?: (deviceId: string) => void;
   } = {}
@@ -415,7 +415,7 @@ export function startH02TcpServer(
             bindId(pos.device_id);
             const t = h02PositionToTelemetry(pos);
             if (t) onTelemetry(t);
-            else if (!pos.valid) onInvalid?.(pos.device_id);
+            else if (!pos.valid) onInvalid?.(pos.device_id, pos.lat, pos.lng);
             if (sendAck) socket.write(buildH02Ack(pos.device_id));
           } catch (err) {
             console.warn(`[h02] binary parse error rawHex=${rawHex}`, err);
