@@ -20,4 +20,12 @@ export type Telemetry = {
   /** Raw GPS before course snap (WGS84). */
   raw_lat?: number;
   raw_lng?: number;
+  /** Fix source after GPS/LBS selection. */
+  source?: "gps" | "lbs";
+  mcc?: number;
+  mnc?: number;
+  lac?: number;
+  ci?: number;
+  /** Full frame hex when available. */
+  raw_hex?: string;
 };

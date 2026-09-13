@@ -7,6 +7,20 @@ import {
   unbindSocket,
   noteDeviceReply,
 } from "./device-sessions.ts";
+import {
+  LBS_FRAME_LEN,
+  fullHex,
+  looksLikeLbs,
+  parseLbs,
+} from "./h02-lbs.ts";
+import {
+  type DeviceFixState,
+  noteGps,
+  noteLbs,
+  selectFix,
+  isUsableGps,
+  type FusedFix,
+} from "./h02-fix-select.ts";
 
 export type TelemetryHandler = (t: Telemetry) => void;
 
@@ -312,6 +326,46 @@ export function detectH02FrameLength(buf: Buffer, locked: number): number | null
  * H02 TCP listener: `$` binary (production) + `*` ASCII H02 text + legacy Mictrack `#…##` fallback.
  * Default port 5013 (H02_TCP_PORT / MT909_TCP_PORT).
  */
+
+const H02_BUFFER_MAX = 8 * 1024;
+
+function emitLbsIfReady(
+  fused: FusedFix | null,
+  boundId: string | null,
+  onTelemetry: TelemetryHandler,
+  onPresence?: (deviceId: string) => void
+) {
+  if (!fused || fused.source !== "lbs") return;
+  const id = fused.id || boundId;
+  if (!id) return;
+  onPresence?.(id);
+  // Cell-only until a cell DB is wired — do not invent lat/lng.
+  if (fused.lat == null || fused.lng == null) {
+    console.log(
+      `[h02] fused source=lbs id=${id} cell-only mcc=${fused.mcc} mnc=${fused.mnc} lac=${fused.lac} ci=${fused.ci} rawHex=${fused.rawHex}`
+    );
+    return;
+  }
+  onTelemetry({
+    device_id: id,
+    lat: fused.lat,
+    lng: fused.lng,
+    speed: 0,
+    alt_baro: 0,
+    climb: 0,
+    ts: fused.ts,
+    bib: "",
+    name: id,
+    distance: 0,
+    source: "lbs",
+    mcc: fused.mcc,
+    mnc: fused.mnc,
+    lac: fused.lac,
+    ci: fused.ci,
+    raw_hex: fused.rawHex,
+  });
+}
+
 export function startH02TcpServer(
   onTelemetry: TelemetryHandler,
   port = Number(process.env.H02_TCP_PORT) ||
@@ -320,7 +374,6 @@ export function startH02TcpServer(
   opts: {
     sendAck?: boolean;
     onInvalid?: (deviceId: string, lat?: number, lng?: number) => void;
-    /** Any non-position uplink (heartbeat / short keep-alive). */
     onPresence?: (deviceId: string) => void;
   } = {}
 ) {
@@ -332,8 +385,8 @@ export function startH02TcpServer(
     let buf = Buffer.alloc(0);
     let lockedFrameLen = 0;
     let boundId: string | null = null;
+    const fixState: DeviceFixState = {};
     const remote = `${socket.remoteAddress}:${socket.remotePort}`;
-    // Probe dead peers; we do NOT idle-kick — ~4min drops are carrier/device side.
     socket.setKeepAlive(true, 30_000);
     socket.setTimeout(0);
     console.log(`[h02] connect ${remote}`);
@@ -349,49 +402,13 @@ export function startH02TcpServer(
       buf = Buffer.concat([buf, chunk]);
 
       while (buf.length > 0) {
-        // Skip noise until marker *, $, or Mictrack #
-        const star = buf.indexOf(0x2a); // *
-        const dollar = buf.indexOf(0x24); // $
-        const hash = buf.indexOf(0x23); // #
-
-        let start = -1;
-        let kind: "star" | "dollar" | "hash" | null = null;
-        const candidates: { i: number; k: typeof kind }[] = [];
-        if (star >= 0) candidates.push({ i: star, k: "star" });
-        if (dollar >= 0) candidates.push({ i: dollar, k: "dollar" });
-        if (hash >= 0) candidates.push({ i: hash, k: "hash" });
-        if (candidates.length === 0) {
-          // Plain SMS-style replies: OK / SET OK. / system reset ok!
-          const plain = buf.toString("utf8");
-          if (/^[\x09\x0a\x0d\x20-\x7e]+$/.test(plain)) {
-            noteDeviceReply(boundId, plain);
-          } else {
-            console.warn(
-              `[h02] drop ${buf.length}B noise (no marker) hex=${buf.subarray(0, Math.min(24, buf.length)).toString("hex")}`
-            );
-          }
-          buf = Buffer.alloc(0);
-          break;
-        }
-        candidates.sort((a, b) => a.i - b.i);
-        start = candidates[0]!.i;
-        kind = candidates[0]!.k;
-        if (start > 0) {
-          const prefix = buf.subarray(0, start).toString("utf8");
-          if (/^[\x09\x0a\x0d\x20-\x7e]+$/.test(prefix) && prefix.trim()) {
-            noteDeviceReply(boundId, prefix);
-          }
-          buf = buf.subarray(start);
-        }
-
-        if (kind === "dollar") {
-          // Collapse doubled `$` (0x24 0x24…) so ID bytes stay aligned.
-          // Mis-sync otherwise invents ids like 2470262388 (bib "2388").
+        // A) H02 GPS — head 0x24, length 32 (or locked long)
+        if (buf[0] === 0x24) {
           while (buf.length >= 2 && buf[0] === 0x24 && buf[1] === 0x24) {
             console.warn("[h02] skip doubled $ marker");
             buf = buf.subarray(1);
           }
-          if (buf.length === 0 || buf[0] !== 0x24) continue;
+          if (!buf.length || buf[0] !== 0x24) continue;
 
           const frameLen = detectH02FrameLength(buf, lockedFrameLen);
           if (frameLen == null) break;
@@ -400,14 +417,11 @@ export function startH02TcpServer(
 
           const frame = Buffer.from(buf.subarray(0, frameLen));
           buf = buf.subarray(frameLen);
-
-          const rawHex = frame.subarray(0, Math.min(32, frame.length)).toString("hex");
+          const rawHex = fullHex(frame);
           try {
             const pos = decodeH02Binary(frame);
             if (!pos) {
-              console.warn(
-                `[h02] binary decode fail len=${frameLen} rawHex=${rawHex}`
-              );
+              console.warn(`[h02] binary decode fail len=${frameLen} rawHex=${rawHex}`);
               continue;
             }
             console.log(
@@ -416,9 +430,27 @@ export function startH02TcpServer(
                 `ts=${new Date(pos.ts).toISOString()} rawHex=${rawHex}`
             );
             bindId(pos.device_id);
-            const t = h02PositionToTelemetry(pos);
-            if (t) onTelemetry(t);
-            else if (!pos.valid) onInvalid?.(pos.device_id, pos.lat, pos.lng);
+            const recvMs = Date.now();
+            noteGps(fixState, pos, rawHex, recvMs);
+
+            if (isUsableGps(pos, recvMs)) {
+              const t = h02PositionToTelemetry(pos);
+              if (t) {
+                t.source = "gps";
+                t.raw_hex = rawHex;
+                const fused = selectFix(fixState, recvMs);
+                if (fused?.mcc != null) {
+                  t.mcc = fused.mcc;
+                  t.mnc = fused.mnc;
+                  t.lac = fused.lac;
+                  t.ci = fused.ci;
+                }
+                onTelemetry(t);
+              }
+            } else {
+              onInvalid?.(pos.device_id, pos.lat, pos.lng);
+              emitLbsIfReady(selectFix(fixState, recvMs), boundId, onTelemetry, onPresence);
+            }
             if (sendAck) socket.write(buildH02Ack(pos.device_id));
           } catch (err) {
             console.warn(`[h02] binary parse error rawHex=${rawHex}`, err);
@@ -426,37 +458,71 @@ export function startH02TcpServer(
           continue;
         }
 
-        if (kind === "star") {
-          const end = buf.indexOf(0x23); // #
+        // B) LBS — no 0x24; 41B with MCC 460 signature
+        if (looksLikeLbs(buf)) {
+          if (buf.length < LBS_FRAME_LEN) break;
+          const frame = Buffer.from(buf.subarray(0, LBS_FRAME_LEN));
+          buf = buf.subarray(LBS_FRAME_LEN);
+          const rawHex = fullHex(frame);
+          const cell = parseLbs(frame);
+          if (!cell) {
+            console.warn(`[h02] lbs parse fail rawHex=${rawHex}`);
+            continue;
+          }
+          console.log(
+            `[h02] lbs id=${boundId || "?"} mcc=${cell.mcc} mnc=${cell.mnc} lac=${cell.lac} ci=${cell.ci} ` +
+              `truncated=${cell.truncated} rawHex=${rawHex}`
+          );
+          const recvMs = Date.now();
+          noteLbs(fixState, cell, recvMs);
+          if (boundId) onPresence?.(boundId);
+          emitLbsIfReady(selectFix(fixState, recvMs), boundId, onTelemetry, onPresence);
+          continue;
+        }
+
+        // ASCII * / Mictrack # / skip toward later $
+        const star = buf.indexOf(0x2a);
+        const dollar = buf.indexOf(0x24);
+        const hash = buf.indexOf(0x23);
+
+        if (dollar > 0) {
+          const prefix = buf.subarray(0, dollar);
+          const prefText = prefix.toString("utf8");
+          if (/^[\x09\x0a\x0d\x20-\x7e]+$/.test(prefText) && prefText.trim()) {
+            noteDeviceReply(boundId, prefText);
+          } else if (prefix.length) {
+            console.warn(`[h02] skip ${prefix.length}B before $ rawHex=${fullHex(prefix)}`);
+          }
+          buf = buf.subarray(dollar);
+          continue;
+        }
+
+        if (star === 0) {
+          const end = buf.indexOf(0x23);
           if (end < 0) break;
           const sentence = buf.subarray(0, end + 1).toString("ascii");
           buf = buf.subarray(end + 1);
-          // skip trailing CR/LF
-          while (buf.length && (buf[0] === 0x0d || buf[0] === 0x0a)) {
-            buf = buf.subarray(1);
-          }
-
+          while (buf.length && (buf[0] === 0x0d || buf[0] === 0x0a)) buf = buf.subarray(1);
           try {
-            // Echo heartbeat responses like Traccar for V0/HTBT
             const m = sentence.match(/^\*[^,]+,([^,]+),(V0|HTBT)\b/i);
             if (m) {
               const id = m[1]!;
               bindId(id);
               onPresence?.(id);
-              if (sendAck) socket.write(sentence); // echo
+              if (sendAck) socket.write(sentence);
               console.log(`[h02] * heartbeat id=${id}`);
               continue;
             }
-            const t = parseH02AsciiText(sentence);
-            if (t) {
+            const tel = parseH02AsciiText(sentence);
+            if (tel) {
               console.log(
-                `[h02] * ascii id=${t.device_id} lat=${t.lat.toFixed(5)} lng=${t.lng.toFixed(5)}`
+                `[h02] * ascii id=${tel.device_id} lat=${tel.lat.toFixed(5)} lng=${tel.lng.toFixed(5)}`
               );
-              bindId(t.device_id);
-              onTelemetry(t);
-              if (sendAck) socket.write(buildH02Ack(t.device_id));
+              bindId(tel.device_id);
+              tel.source = "gps";
+              onTelemetry(tel);
+              if (sendAck) socket.write(buildH02Ack(tel.device_id));
             } else {
-              // Still ACK R12 for unknown * frames with an id; count as presence.
               const idMatch = sentence.match(/^\*[^,]+,([^,]+),/);
               if (idMatch) {
                 const id = idMatch[1]!;
@@ -471,29 +537,28 @@ export function startH02TcpServer(
           continue;
         }
 
-        // Legacy Mictrack `#IMEI#...##` — not production default; keep as fallback
-        if (kind === "hash") {
+        if (hash === 0) {
           const text = buf.toString("utf8");
           const idx = text.indexOf("##");
           if (idx < 0) {
-            // Might actually be noise before a $ / * — if $ appears later wait; if only # wait for ##
-            if (buf.length > 64_000) buf = buf.subarray(-8_000);
+            if (buf.length > H02_BUFFER_MAX) {
+              console.warn(`[h02] buffer overflow clear len=${buf.length}`);
+              buf = Buffer.alloc(0);
+            }
             break;
           }
           const frame = text.slice(0, idx);
           const consumed = Buffer.byteLength(text.slice(0, idx + 2), "utf8");
           buf = buf.subarray(consumed);
-          while (buf.length && (buf[0] === 0x0d || buf[0] === 0x0a)) {
-            buf = buf.subarray(1);
-          }
+          while (buf.length && (buf[0] === 0x0d || buf[0] === 0x0a)) buf = buf.subarray(1);
           try {
-            const t = parseMt909Frame(frame);
-            if (t) {
+            const tel = parseMt909Frame(frame);
+            if (tel) {
               console.log(
-                `[h02] mictrack-fallback id=${t.device_id} lat=${t.lat.toFixed(5)} lng=${t.lng.toFixed(5)}`
+                `[h02] mictrack-fallback id=${tel.device_id} lat=${tel.lat.toFixed(5)} lng=${tel.lng.toFixed(5)}`
               );
-              bindId(t.device_id);
-              onTelemetry(t);
+              bindId(tel.device_id);
+              onTelemetry(tel);
             }
           } catch (err) {
             console.warn("[h02] mictrack fallback error", err);
@@ -501,10 +566,23 @@ export function startH02TcpServer(
           continue;
         }
 
-        break;
+        const plain = buf.toString("utf8");
+        if (/^[\x09\x0a\x0d\x20-\x7e]+$/.test(plain) && plain.trim()) {
+          noteDeviceReply(boundId, plain);
+          buf = Buffer.alloc(0);
+          break;
+        }
+
+        // C) garbage: skip 1 byte (full hex of window, no truncation to 24B)
+        const skipHex = fullHex(buf.subarray(0, Math.min(buf.length, LBS_FRAME_LEN)));
+        console.warn(`[h02] skip 1B garbage head=0x${buf[0]!.toString(16)} rawHex=${skipHex}`);
+        buf = buf.subarray(1);
       }
 
-      if (buf.length > 64_000) buf = buf.subarray(-8_000);
+      if (buf.length > H02_BUFFER_MAX) {
+        console.warn(`[h02] buffer overflow clear len=${buf.length}`);
+        buf = Buffer.alloc(0);
+      }
     });
 
     socket.on("error", (err) => {
@@ -518,7 +596,7 @@ export function startH02TcpServer(
 
   server.listen(port, () => {
     console.log(
-      `[h02] TCP listening on 0.0.0.0:${port} ($ binary + * ASCII; Mictrack # fallback)`
+      `[h02] TCP listening on 0.0.0.0:${port} ($ binary + * ASCII + 41B LBS; Mictrack # fallback)`
     );
   });
   server.on("error", (err) => {
