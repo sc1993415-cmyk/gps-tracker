@@ -121,7 +121,7 @@ export function createMap(
   });
 
   const markers = new Map<string, MarkerRuntime>();
-  let followSelected = true;
+  let followSelected = false;
   let courseReady = false;
   let activeStyleUrl = initialStyleUrl;
   let lastCourse: CourseFeature | null | undefined;
@@ -136,6 +136,10 @@ export function createMap(
   let cameraFitted = false;
   let startFinishMarkers: maplibregl.Marker[] = [];
   let endsEnabled = true;
+
+  map.on("dragstart", () => {
+    followSelected = false;
+  });
 
   function mountOverlayLayers() {
     if (!map.getSource("course")) {
@@ -523,10 +527,14 @@ export function createMap(
 
         if (opts.showTrails !== false && visible && p.trail.length >= 2) {
           for (const coords of trailLineCoords(p.trail, state.trailBreak?.breakM ?? DEFAULT_TRAIL_BREAK_M)) {
+            const line = coords.slice();
+            if (state.interpDelay?.enabled !== false && line.length >= 2) {
+              line[line.length - 1] = [rt.displayLng, rt.displayLat];
+            }
             trailFeatures.push({
               type: "Feature",
               properties: { color, id: p.id, selected: isSelected ? 1 : 0 },
-              geometry: { type: "LineString", coordinates: coords },
+              geometry: { type: "LineString", coordinates: line },
             });
           }
         }
@@ -576,8 +584,9 @@ export function createMap(
         const sel = state.participants[selectedId];
         if (sel) {
           const ov = opts.positionOverrides?.[selectedId];
-          const destLng = ov ? ov.lng : sel.athlete.lng;
-          const destLat = ov ? ov.lat : sel.athlete.lat;
+          const liveRt = markers.get(selectedId);
+          const destLng = ov ? ov.lng : liveRt ? liveRt.displayLng : sel.athlete.lng;
+          const destLat = ov ? ov.lat : liveRt ? liveRt.displayLat : sel.athlete.lat;
           if (Number.isFinite(destLng) && Number.isFinite(destLat) && Math.abs(destLat) + Math.abs(destLng) > 1e-4) {
             const center = map.getCenter();
             const far =

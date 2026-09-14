@@ -120,10 +120,20 @@ function resolveSelection(state: OverlayState): string | null {
   }
 
   if (selectedId && state.participants[selectedId]) return selectedId;
-  return list[0]!.id;
+  return null;
 }
 
 function selectParticipant(id: string) {
+  if (selectedId === id && userPicked) {
+    selectedId = null;
+    userPicked = true;
+    map.setFollow(false);
+    const h0 = new URLSearchParams(location.hash.startsWith("#") ? location.hash.slice(1) : "");
+    h0.delete("selected");
+    history.replaceState(null, "", h0.toString() ? "#" + h0.toString() : location.pathname + location.search);
+    render();
+    return;
+  }
   selectedId = id;
   userPicked = true;
   map.setFollow(true);
@@ -498,7 +508,7 @@ function render() {
     : state;
   map.update(mapState, {
     selectedId,
-    follow: st !== "ended",
+    follow: st !== "ended" && !!selectedId,
     hideNonSelected: params.hideNonSelected,
     courseOverride: state.course ?? courseOverride,
     showTrails: st === "live" || st === "ended",
