@@ -42,6 +42,7 @@ import {
   resetSession,
 } from "./session.ts";
 import { getSnapConfig, setSnapEnabled } from "./snap.ts";
+import { lookupCell, getCellDbStats, ensureCellDbLoaded } from "./cell-lookup.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ADMIN_HTML = path.resolve(__dirname, "../public/admin.html");
@@ -330,6 +331,25 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
 
       if (url.pathname === "/api/session/reset" && method === "POST") {
         sendJson(res, 200, resetSession());
+        return;
+      }
+
+      if (url.pathname === "/api/cell/lookup" && method === "GET") {
+        ensureCellDbLoaded();
+        const mcc = Number(url.searchParams.get("mcc") ?? 460);
+        const mnc = Number(url.searchParams.get("mnc") ?? 0);
+        const lac = Number(url.searchParams.get("lac"));
+        const ciRaw = url.searchParams.get("ci");
+        const ci = ciRaw != null && ciRaw !== "" ? Number(ciRaw) : undefined;
+        if (!Number.isFinite(lac)) {
+          sendJson(res, 400, { error: "lac required", db: getCellDbStats() });
+          return;
+        }
+        sendJson(res, 200, {
+          query: { mcc, mnc, lac, ci },
+          hit: lookupCell(mcc, mnc, lac, ci),
+          db: getCellDbStats(),
+        });
         return;
       }
 

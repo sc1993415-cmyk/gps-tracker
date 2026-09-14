@@ -343,20 +343,19 @@ function emitLbsIfReady(
 
   let lat = fused.lat;
   let lng = fused.lng;
-  let match: string | undefined;
+  let match: "exact" | "lac" | "lac_any_mnc" | undefined;
+  let rangeM: number | undefined;
 
-  // Resolve offline OpenCelliD when selectFix left coords empty (LAC-primary).
-  if (
-    (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) &&
-    fused.mcc != null &&
-    fused.mnc != null &&
-    fused.lac != null
-  ) {
+  // Always query local OpenCelliD (exact CI → LAC centroid → any-MNC LAC).
+  if (fused.mcc != null && fused.mnc != null && fused.lac != null) {
     const hit = lookupCell(fused.mcc, fused.mnc, fused.lac, fused.ci);
     if (hit) {
-      lat = hit.lat;
-      lng = hit.lng;
+      if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) {
+        lat = hit.lat;
+        lng = hit.lng;
+      }
       match = hit.match;
+      rangeM = hit.range;
     }
   }
 
@@ -368,7 +367,8 @@ function emitLbsIfReady(
   }
 
   console.log(
-    `[h02] fused source=lbs id=${id} match=${match ?? "coords"} lat=${lat.toFixed(5)} lng=${lng.toFixed(5)} mcc=${fused.mcc} mnc=${fused.mnc} lac=${fused.lac} ci=${fused.ci}`
+    `[h02] fused source=lbs id=${id} match=${match ?? "coords"} range_m=${rangeM ?? "-"} ` +
+      `lat=${lat.toFixed(5)} lng=${lng.toFixed(5)} mcc=${fused.mcc} mnc=${fused.mnc} lac=${fused.lac} ci=${fused.ci}`
   );
   onTelemetry({
     device_id: id,
@@ -386,6 +386,8 @@ function emitLbsIfReady(
     mnc: fused.mnc,
     lac: fused.lac,
     ci: fused.ci,
+    lbs_match: match,
+    lbs_range_m: rangeM,
     raw_hex: fused.rawHex,
   });
 }

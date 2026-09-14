@@ -90,6 +90,11 @@ export function createMap(
     type: "FeatureCollection",
     features: [],
   };
+  let lastLbsFc: GeoJSON.FeatureCollection = {
+    type: "FeatureCollection",
+    features: [],
+  };
+  let cameraFitted = false;
 
   function mountOverlayLayers() {
     if (!map.getSource("course")) {
@@ -121,6 +126,46 @@ export function createMap(
         },
       });
     }
+    if (!map.getSource("lbs")) {
+      map.addSource("lbs", {
+        type: "geojson",
+        data: { type: "FeatureCollection", features: [] },
+      });
+      map.addLayer({
+        id: "lbs-accuracy-fill",
+        type: "fill",
+        source: "lbs",
+        filter: ["==", ["get", "kind"], "accuracy"],
+        paint: {
+          "fill-color": "#22c55e",
+          "fill-opacity": 0.16,
+        },
+      });
+      map.addLayer({
+        id: "lbs-accuracy-line",
+        type: "line",
+        source: "lbs",
+        filter: ["==", ["get", "kind"], "accuracy"],
+        paint: {
+          "line-color": "#22c55e",
+          "line-width": 2,
+          "line-opacity": 0.85,
+          "line-dasharray": [2, 1.5],
+        },
+      });
+      map.addLayer({
+        id: "lbs-point",
+        type: "circle",
+        source: "lbs",
+        filter: ["==", ["get", "kind"], "center"],
+        paint: {
+          "circle-radius": 7,
+          "circle-color": "#22c55e",
+          "circle-stroke-width": 2,
+          "circle-stroke-color": "#ffffff",
+        },
+      });
+    }
     courseReady = true;
     // Restore last course/trails after style swap
     const courseSrc = map.getSource("course") as maplibregl.GeoJSONSource | undefined;
@@ -130,6 +175,8 @@ export function createMap(
     }
     const trailsSrc = map.getSource("trails") as maplibregl.GeoJSONSource | undefined;
     trailsSrc?.setData(lastTrailFc);
+    const lbsSrc = map.getSource("lbs") as maplibregl.GeoJSONSource | undefined;
+    lbsSrc?.setData(lastLbsFc);
   }
 
   map.on("load", () => mountOverlayLayers());
@@ -241,9 +288,17 @@ export function createMap(
 
       const trailFeatures: GeoJSON.Feature[] = [];
 
+      const lbsFeatures: GeoJSON.Feature[] = [];
+
       for (const p of participants) {
-        // Presence-only stubs (no valid fix yet) stay off the map.
-        if (!p.last_fix_ms) continue;
+        const ov0 = opts.positionOverrides?.[p.id];
+        const hasCoords =
+          Number.isFinite(ov0?.lat ?? p.athlete.lat) &&
+          Number.isFinite(ov0?.lng ?? p.athlete.lng) &&
+          Math.abs(ov0?.lat ?? p.athlete.lat) + Math.abs(ov0?.lng ?? p.athlete.lng) > 1e-4;
+        // Presence-only stubs (0,0 / never fixed) stay off the map.
+        if (!p.last_fix_ms && !hasCoords) continue;
+        if (!hasCoords) continue;
         seen.add(p.id);
         const color = p.color || "#ff3b5c";
         const isSelected = p.id === selectedId;
@@ -253,10 +308,12 @@ export function createMap(
         rt.el.style.setProperty("--dot-color", color);
         rt.el.classList.toggle("selected", isSelected);
         rt.el.classList.toggle("hidden-marker", !visible);
+        rt.el.classList.toggle("lbs", p.athlete?.source === "lbs");
 
         const flag = rt.el.querySelector(".athlete-flag") as HTMLElement | null;
         if (flag) {
-          flag.textContent = isSelected ? `#${p.bib} ${shortName(p.name)}` : "";
+          const lbsTag = p.athlete?.source === "lbs" ? " · LBS" : "";
+          flag.textContent = isSelected ? `#${p.bib} ${shortName(p.name)}${lbsTag}` : "";
           flag.style.display = isSelected ? "block" : "none";
         }
 
@@ -300,6 +357,30 @@ export function createMap(
             },
           });
         }
+
+        if (visible && p.athlete?.source === "lbs") {
+          const rangeM =
+            typeof p.athlete.lbs_range_m === "number" && p.athlete.lbs_range_m > 50
+              ? Math.min(p.athlete.lbs_range_m, 8000)
+              : 1200;
+          lbsFeatures.push({
+            type: "Feature",
+            properties: {
+              kind: "accuracy",
+              id: p.id,
+              match: p.athlete.lbs_match || "lac",
+            },
+            geometry: {
+              type: "Polygon",
+              coordinates: [circlePolygon(nextLng, nextLat, rangeM)],
+            },
+          });
+          lbsFeatures.push({
+            type: "Feature",
+            properties: { kind: "center", id: p.id },
+            geometry: { type: "Point", coordinates: [nextLng, nextLat] },
+          });
+        }
       }
 
       for (const [id, rt] of markers) {
@@ -314,15 +395,31 @@ export function createMap(
       const trailsSrc = map.getSource("trails") as maplibregl.GeoJSONSource | undefined;
       trailsSrc?.setData(lastTrailFc);
 
+      lastLbsFc = { type: "FeatureCollection", features: lbsFeatures };
+      const lbsSrc = map.getSource("lbs") as maplibregl.GeoJSONSource | undefined;
+      lbsSrc?.setData(lastLbsFc);
+
       if (followSelected && selectedId) {
         const sel = state.participants[selectedId];
         if (sel) {
           const ov = opts.positionOverrides?.[selectedId];
-          const selRt = markers.get(selectedId);
-          map.easeTo({
-            center: [ov ? ov.lng : sel.athlete.lng, ov ? ov.lat : sel.athlete.lat],
-            duration: selRt?.lerpMs ?? DEFAULT_LERP_MS,
-          });
+          const destLng = ov ? ov.lng : sel.athlete.lng;
+          const destLat = ov ? ov.lat : sel.athlete.lat;
+          if (Number.isFinite(destLng) && Number.isFinite(destLat) && Math.abs(destLat) + Math.abs(destLng) > 1e-4) {
+            const center = map.getCenter();
+            const far =
+              Math.abs(center.lng - destLng) + Math.abs(center.lat - destLat) > 0.15;
+            if (!cameraFitted || far) {
+              cameraFitted = true;
+              map.jumpTo({ center: [destLng, destLat], zoom: Math.max(map.getZoom(), 14) });
+            } else {
+              const selRt = markers.get(selectedId);
+              map.easeTo({
+                center: [destLng, destLat],
+                duration: selRt?.lerpMs ?? DEFAULT_LERP_MS,
+              });
+            }
+          }
         }
       }
     },
@@ -339,4 +436,18 @@ function emptyLine(): GeoJSON.Feature {
     properties: {},
     geometry: { type: "LineString", coordinates: [] },
   };
+}
+
+/** Approximate geodesic ring in WGS84, returned as a closed LinearRing. */
+function circlePolygon(lng: number, lat: number, radiusM: number, steps = 64): [number, number][] {
+  const R = 6378137;
+  const ring: [number, number][] = [];
+  const latRad = (lat * Math.PI) / 180;
+  for (let i = 0; i <= steps; i++) {
+    const br = (2 * Math.PI * i) / steps;
+    const dLat = (radiusM * Math.cos(br)) / R;
+    const dLng = (radiusM * Math.sin(br)) / (R * Math.cos(latRad));
+    ring.push([lng + (dLng * 180) / Math.PI, lat + (dLat * 180) / Math.PI]);
+  }
+  return ring;
 }

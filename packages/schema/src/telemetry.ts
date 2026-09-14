@@ -26,6 +26,10 @@ export type Telemetry = {
   mnc?: number;
   lac?: number;
   ci?: number;
+  /** OpenCelliD match quality when source=lbs. */
+  lbs_match?: "exact" | "lac" | "lac_any_mnc";
+  /** Approximate cell/LAC radius in meters from offline DB. */
+  lbs_range_m?: number;
   /** Full frame hex when available. */
   raw_hex?: string;
 };

@@ -225,7 +225,7 @@ function renderList(participants: Participant[], selected: string | null, state:
         Math.abs(p.athlete.lat) + Math.abs(p.athlete.lng) > 1e-6;
       if (isLbs) {
         parts.push(
-          `<span class="online lbs" title="LBS粗定位"></span><span class="lbs-tag">LBS</span>`
+          `<span class="online lbs" title="LBS粗定位 ${p.athlete.lbs_match || ""}"></span><span class="lbs-tag">LBS${p.athlete.lbs_match === "exact" ? "·小区" : "·LAC"}</span>`
         );
       } else {
         const st = p.fix_status ?? (p.online ? "online_no_fix" : "offline");

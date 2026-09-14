@@ -23,6 +23,8 @@ export type Telemetry = {
   mnc?: number;
   lac?: number;
   ci?: number;
+  lbs_match?: "exact" | "lac" | "lac_any_mnc";
+  lbs_range_m?: number;
   raw_hex?: string;
 };
 

@@ -48,7 +48,7 @@ pnpm --filter receiver mt909
 - 跳点过滤：过大步进/速度钉住上一点；重连旧包 `recv−device_ts>120s` 或 device_ts 回退>30s → 丢弃
 - 在线态：在线 / 定位中 / 在线·无定位 / 离线（心跳可刷在线）
 - Marker 插值：按接收间隔中位数动态 `clamp(0.85×T, 0.4s, 8s)`（>15s 空档不估 T）
-- 当前链路 **无可用 LBS 帧**（近周仅 `$` 二进制）；室内冻最后有效 GPS
+- LBS：无有效 GPS 时用离线 OpenCelliD（`apps/receiver/data/opencellid-460.csv.gz`）查小区（精确 CI → 同 LAC 质心）。叠层画绿色精度圈
 
 ## 文档
 字段样例：`packages/schema/examples/sample.json`。MQTT topic（可选）：`telemetry/{device_id}`。  
