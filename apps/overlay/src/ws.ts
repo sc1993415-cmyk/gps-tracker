@@ -1,4 +1,4 @@
-export type TrailPoint = { lat: number; lng: number; alt_baro: number; ts: number };
+export type TrailPoint = { lat: number; lng: number; alt_baro: number; ts: number; gap?: boolean };
 
 export type Telemetry = {
   device_id: string;
@@ -18,7 +18,7 @@ export type Telemetry = {
   raw_lat?: number;
   raw_lng?: number;
   /** Fix source after GPS/LBS selection. */
-  source?: "gps" | "lbs";
+  source?: "gps" | "lbs" | "coast";
   mcc?: number;
   mnc?: number;
   lac?: number;
@@ -38,6 +38,7 @@ export type Participant = {
   id: string;
   bib: string;
   name: string;
+  nationality?: string;
   color?: string;
   online: boolean;
   athlete: Telemetry;
@@ -48,6 +49,10 @@ export type Participant = {
   dist_to_finish_m?: number;
   off_course?: boolean;
   lap?: number;
+  cum_climb_m?: number;
+  gps_distance_m?: number;
+  pace_s_per_km?: number;
+
   last_seen_ms?: number;
   last_fix_ms?: number;
   fix_status?: "fixing" | "online_no_fix" | "offline";
@@ -71,6 +76,11 @@ export type OverlayState = {
   session?: SessionInfo;
   /** Course snap: marker+trail use projected point when within maxMapM. */
   snap?: { enabled: boolean; maxMapM: number };
+  /** Yellow trail / marker teleport break distance. */
+  trailBreak?: { breakM: number };
+  interpDelay?: { enabled: boolean };
+  hudFields?: { id: string; enabled: boolean }[];
+  courseEnds?: { enabled: boolean };
 };
 
 /** Legacy single-athlete shape — wrapped as one participant when received. */
@@ -89,6 +99,10 @@ export function normalizeOverlayState(raw: unknown): OverlayState {
       listColumns: (o.listColumns as OverlayState["listColumns"]) ?? undefined,
       session: (o.session as OverlayState["session"]) ?? undefined,
       snap: (o.snap as OverlayState["snap"]) ?? undefined,
+      trailBreak: (o.trailBreak as OverlayState["trailBreak"]) ?? undefined,
+      interpDelay: (o.interpDelay as OverlayState["interpDelay"]) ?? undefined,
+      hudFields: (o.hudFields as OverlayState["hudFields"]) ?? undefined,
+      courseEnds: (o.courseEnds as OverlayState["courseEnds"]) ?? undefined,
     };
   }
 

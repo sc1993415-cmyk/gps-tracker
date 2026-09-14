@@ -120,13 +120,25 @@
       .participant-item .lbs-tag { font-size: 10px; color: #7cffb2; margin-left: 4px; font-weight: 600; }
       #hud {
         position: absolute; left: 16px; right: 16px; bottom: 16px; z-index: 5;
-        display: flex; gap: 24px; padding: var(--hud-pad) 18px;
+        display: flex; flex-wrap: wrap; gap: 18px 28px; padding: var(--hud-pad) 18px;
         background: rgba(8, 12, 18, 0.72); color: #fff;
         font: 600 var(--hud-font)/1.1 system-ui, sans-serif; border-radius: 12px;
         backdrop-filter: blur(8px);
       }
       #hud.hidden { display: none; }
-      #hud span { opacity: 0.65; font-size: 14px; font-weight: 500; display: block; }
+      #hud span { opacity: 0.65; font-size: 13px; font-weight: 500; display: block; }
+      #hud .hud-item { min-width: 72px; }
+      #hud .hud-flag { font-size: 32px; line-height: 1; }
+      #hud img.hud-flag-img { width: 32px; height: 24px; display: block; border-radius: 3px; }
+      .course-end { display: flex; flex-direction: column; align-items: center; pointer-events: none; filter: drop-shadow(0 2px 4px rgba(0,0,0,.35)); }
+      .course-end .ce-flag { line-height: 0; }
+      .course-end .ce-label {
+        margin-top: -2px; padding: 2px 6px; border-radius: 4px;
+        font: 800 10px/1.1 system-ui, sans-serif; letter-spacing: .04em; color: #fff;
+      }
+      .course-end .ce-label.start { background: #16a34a; }
+      .course-end .ce-label.finish { background: #111; }
+      .course-end .ce-label.both { background: #0f172a; }
       .athlete-marker { display: flex; flex-direction: column; align-items: center; pointer-events: none; }
       .athlete-marker.hidden-marker { display: none; }
       .athlete-flag {
@@ -150,6 +162,13 @@
         box-shadow: 0 0 14px #22c55e;
         border-color: #ecfdf3;
       }
+      .participant-item .online.coast { background: #ffb020; }
+      .participant-item .coast-tag { font-size: 10px; color: #ffb020; margin-left: 4px; font-weight: 600; }
+      .athlete-marker.coast .athlete-dot {
+        background: #ffb020;
+        box-shadow: 0 0 0 3px rgba(255,176,32,0.35);
+      }
+      .athlete-marker.coast .athlete-flag { color: #ffb020; }
       .athlete-marker.lbs .athlete-flag {
         background: #15803d;
       }
@@ -178,11 +197,7 @@
       </div>
       <div id="participant-list"></div>
     </aside>
-    <div id="hud" class="hidden">
-      <div><span>时速 km/h</span><strong id="speed">0.0</strong></div>
-      <div><span>距离 km</span><strong id="distance">0.00</strong></div>
-      <div><span>爬升 m</span><strong id="climb">0</strong></div>
-    </div>
+    <div id="hud" class="hidden"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

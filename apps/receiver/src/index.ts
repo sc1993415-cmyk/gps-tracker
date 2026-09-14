@@ -28,6 +28,11 @@ import {
   setListColumnsReloadHandler,
 } from "./list-columns.ts";
 import {
+  loadHudFields,
+  getHudFields,
+  setHudFieldsReloadHandler,
+} from "./hud-fields.ts";
+import {
   loadPersistedCourse,
   setCourseUploadHandler,
   type GpxParseResult,
@@ -39,6 +44,16 @@ import {
   projectToCourse,
   type CourseIndex,
 } from "course-project";
+import {
+  noteOnCourseGps,
+  stepCoast,
+  hasCoastable,
+  activeCoastIds,
+  loadCoastConfig,
+  setCoastReloadHandler,
+  COAST_MIN_KMH,
+  COAST_TICK_MS,
+} from "./course-coast.ts";
 import { checkJump, type AcceptedFix } from "./jump-filter.ts";
 import { checkStaleDeviceTs } from "./stale-ts.ts";
 import {
@@ -54,6 +69,22 @@ import {
   getSnapConfig,
   setSnapReloadHandler,
 } from "./snap.ts";
+import {
+  loadTrailBreakConfig,
+  getTrailBreakConfig,
+  getTrailBreakM,
+  setTrailBreakReloadHandler,
+} from "./trail-break.ts";
+import {
+  loadInterpDelayConfig,
+  getInterpDelayConfig,
+  setInterpDelayReloadHandler,
+} from "./interp-delay.ts";
+import {
+  loadCourseEndsConfig,
+  getCourseEndsConfig,
+  setCourseEndsReloadHandler,
+} from "./course-ends.ts";
 import { isDeviceOnline } from "./device-sessions.ts";
 
 /** No packet / no TCP within this window → offline (covers ~5min standby heartbeat). */
@@ -136,6 +167,13 @@ function rebuildCourseIndex(course: CourseFeature | null) {
 }
 
 function applyUploadedCourse(result: GpxParseResult & { paths: string[] }) {
+  if (!result.pointCount || result.source === "cleared") {
+    state.course = null;
+    rebuildCourseIndex(null);
+    emitState();
+    console.log("[course] cleared");
+    return;
+  }
   state.course = result.feature;
   rebuildCourseIndex(result.feature);
   emitState();
@@ -148,11 +186,16 @@ loadRoster();
 loadDiscovery();
 loadEventName();
 loadSnapConfig();
+loadTrailBreakConfig();
+loadInterpDelayConfig();
+loadCourseEndsConfig();
+loadCoastConfig();
 if (!demo) {
   state.event = { name: getSession().event_name };
 }
 loadMapStyle();
 loadListColumns();
+loadHudFields();
 
 if (demo) {
   rebuildCourseIndex(DEMO_COURSE);
@@ -179,6 +222,7 @@ function applyRosterFields(p: Participant, deviceId: string) {
     if (entry.bib) p.bib = entry.bib;
     if (entry.name) p.name = entry.name;
     if (entry.color) p.color = entry.color;
+    if (entry.nationality) p.nationality = entry.nationality;
   }
 }
 
@@ -405,7 +449,10 @@ function clearAllSessionTrails() {
 function applyTelemetry(athlete: Telemetry) {
   const recvMs = Date.now();
   const isLbs = athlete.source === "lbs";
+  const isCoast = athlete.source === "coast";
   const prev = lastAcceptedFix.get(athlete.device_id);
+  const existing = state.participants[athlete.device_id];
+  const prevSource = existing?.athlete?.source;
 
   // LBS coarse fixes: keep stale-ts check optional — skip jump reject & course snap.
   if (!isLbs) {
@@ -439,12 +486,14 @@ function applyTelemetry(athlete: Telemetry) {
     }
   }
 
-  lastAcceptedFix.set(athlete.device_id, {
-    lat: athlete.lat,
-    lng: athlete.lng,
-    ts: athlete.ts,
-    recv_ms: recvMs,
-  });
+  if (!isLbs && !isCoast) {
+    lastAcceptedFix.set(athlete.device_id, {
+      lat: athlete.lat,
+      lng: athlete.lng,
+      ts: athlete.ts,
+      recv_ms: recvMs,
+    });
+  }
 
   const rawGps = { lat: athlete.lat, lng: athlete.lng };
   const p = ensureParticipant(athlete);
@@ -458,41 +507,108 @@ function applyTelemetry(athlete: Telemetry) {
   };
 
   if (isLbs) {
-    // Coarse cell position: use raw lat/lng, no course snap; still refresh progress hooks lightly.
-    applyCourseProjection(p, rawGps); // updates progress_m / last side effects if any
-    p.athlete = {
-      ...p.athlete,
-      lat: rawGps.lat,
-      lng: rawGps.lng,
-      source: "lbs",
-      speed: 0,
-    };
+    const coast = hasCoastable(athlete.device_id) ? stepCoast(athlete.device_id, courseIndex) : null;
+    if (coast) {
+      applyCourseProjection(p, { lat: coast.lat, lng: coast.lng });
+      p.athlete = {
+        ...p.athlete,
+        lat: coast.lat,
+        lng: coast.lng,
+        source: "coast",
+        speed: coast.speedKmh,
+      };
+      console.log(
+        "[coast] id=" + athlete.device_id +
+          " s=" + coast.s.toFixed(1) + " m +" + coast.coastedM.toFixed(0) + "m " +
+          String(coast.speedKmh) + "km/h"
+      );
+    } else {
+      applyCourseProjection(p, rawGps);
+      p.athlete = {
+        ...p.athlete,
+        lat: rawGps.lat,
+        lng: rawGps.lng,
+        source: "lbs",
+        speed: 0,
+      };
+    }
   } else {
     const onCourse = applyCourseProjection(p, rawGps);
     const snapOn = isSnapEnabled();
+    if (onCourse) {
+      const proj = projByParticipant.get(p.id);
+      if (proj) {
+        noteOnCourseGps(athlete.device_id, proj.sPrev, proj.lap, athlete.speed || 0);
+      }
+    }
     if (snapOn && onCourse) {
       p.athlete = {
         ...p.athlete,
         lat: onCourse.lat,
         lng: onCourse.lng,
+        source: "gps",
       };
     } else {
       p.athlete = {
         ...p.athlete,
         lat: rawGps.lat,
         lng: rawGps.lng,
+        source: athlete.source || "gps",
       };
     }
   }
 
-  // Session trail follows display position (snapped when on-course).
+  // Cumulative climb = sum of positive GPS altitude steps (>=1.5m). LBS/coast ignored.
+  if (!isLbs && !isCoast && Number.isFinite(athlete.alt_baro) && athlete.alt_baro !== 0) {
+    const prevAlt = p.last_alt_m;
+    if (typeof prevAlt === "number" && athlete.alt_baro > prevAlt + 1.5) {
+      p.cum_climb_m = (p.cum_climb_m || 0) + (athlete.alt_baro - prevAlt);
+    }
+    p.last_alt_m = athlete.alt_baro;
+  }
+  p.athlete.climb = p.cum_climb_m || 0;
+
+  // Passed distance: prefer course progress, else GPS trail integration.
+  if (!isLbs) {
+    const prevFix = lastAcceptedFix.get(athlete.device_id);
+    // lastAcceptedFix already updated for GPS; use trail last point instead
+    const lastPt = p.trail[p.trail.length - 1];
+    if (lastPt && !lastPt.gap) {
+      const dlat = p.athlete.lat - lastPt.lat;
+      const dlng = p.athlete.lng - lastPt.lng;
+      const toRad = (d: number) => (d * Math.PI) / 180;
+      const h =
+        Math.sin(toRad(dlat) / 2) ** 2 +
+        Math.cos(toRad(lastPt.lat)) * Math.cos(toRad(p.athlete.lat)) * Math.sin(toRad(dlng) / 2) ** 2;
+      const step = 2 * 6371000 * Math.asin(Math.sqrt(Math.min(1, h)));
+      if (Number.isFinite(step) && step > 0 && step < 80) {
+        p.gps_distance_m = (p.gps_distance_m || 0) + step;
+      }
+    }
+  }
+  const passed = Number.isFinite(p.progress_m) ? p.progress_m! : p.gps_distance_m || 0;
+  p.athlete.distance = passed;
+  const sess = getSession();
+  const t0 = sess.started_ms;
+  if (t0 && passed > 50) {
+    const elapsedS = Math.max(1, (Date.now() - t0) / 1000);
+    p.pace_s_per_km = elapsedS / (passed / 1000);
+  }
+
+  // Session trail: GPS + coast only. Never join LBS/coast → GPS with a yellow slash.
   if (isSessionLive()) {
-    pushTrailPoint(p.trail, {
-      lat: p.athlete.lat,
-      lng: p.athlete.lng,
-      alt_baro: athlete.alt_baro,
-      ts: Date.now(),
-    });
+    const src = p.athlete.source;
+    if (src !== "lbs") {
+      const fromCoarse = prevSource === "lbs" || prevSource === "coast";
+      const toGps = src === "gps" || src == null;
+      pushTrailPoint(p.trail, {
+        lat: p.athlete.lat,
+        lng: p.athlete.lng,
+        alt_baro: athlete.alt_baro,
+        ts: Date.now(),
+        gap: fromCoarse && toGps,
+      }, 2000, getTrailBreakM());
+    }
   }
 }
 
@@ -502,14 +618,19 @@ function emitState() {
   if (!demo) state.event = { name: sess.event_name };
   state.mapStyle = getMapStyle();
   state.listColumns = getListColumns().map(({ id, enabled }) => ({ id, enabled }));
+  state.hudFields = getHudFields().map(({ id, enabled }) => ({ id, enabled }));
   broadcast({
     event: state.event,
     course: state.course,
     participants: cloneParticipants(state.participants),
     mapStyle: state.mapStyle,
     listColumns: state.listColumns,
+    hudFields: state.hudFields,
     session: sess,
     snap: getSnapConfig(),
+    trailBreak: getTrailBreakConfig(),
+    interpDelay: getInterpDelayConfig(),
+    courseEnds: getCourseEndsConfig(),
   } as OverlayState);
 }
 
@@ -537,8 +658,13 @@ function reapplyRosterToParticipants() {
 setRosterReloadHandler(reapplyRosterToParticipants);
 setMapStyleReloadHandler(() => emitState());
 setListColumnsReloadHandler(() => emitState());
+setHudFieldsReloadHandler(() => emitState());
 setSessionReloadHandler(() => emitState());
 setSnapReloadHandler(() => emitState());
+setTrailBreakReloadHandler(() => emitState());
+setInterpDelayReloadHandler(() => emitState());
+setCourseEndsReloadHandler(() => emitState());
+setCoastReloadHandler(() => emitState());
 
 setSessionTrailClearer(clearAllSessionTrails);
 
@@ -608,6 +734,26 @@ if (demo) {
     );
     if (before !== after) emitState();
   }, 5000);
+  setInterval(() => {
+    let moved = false;
+    for (const id of activeCoastIds()) {
+      const p = state.participants[id];
+      if (!p || !p.online) continue;
+      const coast = stepCoast(id, courseIndex);
+      if (!coast) continue;
+      applyCourseProjection(p, { lat: coast.lat, lng: coast.lng });
+      p.athlete = {
+        ...p.athlete,
+        lat: coast.lat,
+        lng: coast.lng,
+        source: "coast",
+        speed: coast.speedKmh,
+      };
+      moved = true;
+    }
+    if (moved) emitState();
+  }, COAST_TICK_MS);
+  console.log("[coast] minKmh=" + COAST_MIN_KMH + " tick=" + COAST_TICK_MS + "ms");
 }
 
 // mqtt.ts 可先留空占位

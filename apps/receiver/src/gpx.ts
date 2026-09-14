@@ -170,6 +170,38 @@ export function saveCourseFeature(
   return { paths, pointCount, totalM };
 }
 
+export const OVERLAY_DIST_COURSE_PATH = path.resolve(
+  __dirname,
+  "../../overlay/dist/course.geojson"
+);
+
+export function clearPersistedCourse(): { removed: string[] } {
+  const removed: string[] = [];
+  for (const p of [RECEIVER_COURSE_PATH, OVERLAY_COURSE_PATH, OVERLAY_DIST_COURSE_PATH]) {
+    try {
+      if (fs.existsSync(p)) {
+        fs.unlinkSync(p);
+        removed.push(p);
+      }
+    } catch (err) {
+      console.warn("[gpx] unlink failed", p, err);
+    }
+  }
+  console.log("[gpx] cleared course files", removed.length ? removed.join(" , ") : "(none)");
+  onCourseUploaded?.({
+    feature: {
+      type: "Feature",
+      properties: { name: "", cleared: true },
+      geometry: { type: "LineString", coordinates: [] },
+    } as CourseFeature,
+    pointCount: 0,
+    totalM: 0,
+    source: "cleared",
+    paths: removed,
+  });
+  return { removed };
+}
+
 export function uploadGpx(xml: string, name?: string): GpxParseResult & { paths: string[] } {
   const parsed = parseGpxToCourse(xml, name || "uploaded-course");
   const { paths } = saveCourseFeature(parsed.feature, {

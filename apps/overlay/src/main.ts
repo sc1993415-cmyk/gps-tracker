@@ -61,9 +61,6 @@ const listEl = document.querySelector("#participant-list")!;
 const listPanel = document.querySelector("#list-panel")!;
 const toggleBtn = document.querySelector("#list-toggle") as HTMLButtonElement;
 const hud = document.querySelector("#hud")!;
-const speedEl = document.querySelector("#speed")!;
-const distanceEl = document.querySelector("#distance")!;
-const climbEl = document.querySelector("#climb")!;
 
 let selectedId: string | null = null;
 let latest: OverlayState = { participants: {} };
@@ -219,11 +216,15 @@ function renderList(participants: Participant[], selected: string | null, state:
       parts.push(`<span class="offCourse">偏航</span>`);
     }
     if (cols.online) {
-      const isLbs =
-        p.athlete?.source === "lbs" &&
-        Number.isFinite(p.athlete.lat) &&
+      const src = p.athlete?.source;
+      const hasPos =
+        Number.isFinite(p.athlete?.lat) &&
         Math.abs(p.athlete.lat) + Math.abs(p.athlete.lng) > 1e-6;
-      if (isLbs) {
+      if (src === "coast" && hasPos) {
+        parts.push(
+          `<span class="online coast" title="赛道推估"></span><span class="coast-tag">赛道推估</span>`
+        );
+      } else if (src === "lbs" && hasPos) {
         parts.push(
           `<span class="online lbs" title="LBS粗定位 ${p.athlete.lbs_match || ""}"></span><span class="lbs-tag">LBS${p.athlete.lbs_match === "exact" ? "·小区" : "·LAC"}</span>`
         );
@@ -253,15 +254,76 @@ function escapeHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
+const DEFAULT_HUD_FIELDS: Record<string, boolean> = {
+  bib: true,
+  name: true,
+  nationality: true,
+  speed: true,
+  distance: true,
+  remaining: true,
+  pace: true,
+  climb: true,
+};
+
+function enabledHud(state: OverlayState): Record<string, boolean> {
+  const out = { ...DEFAULT_HUD_FIELDS };
+  const cols = state.hudFields;
+  if (Array.isArray(cols) && cols.length) {
+    for (const k of Object.keys(out)) out[k] = false;
+    for (const c of cols) {
+      if (c && typeof c.id === "string") out[c.id] = c.enabled !== false;
+    }
+  }
+  return out;
+}
+
+function flagEmoji(iso?: string): string {
+  const cc = (iso || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(cc)) return "";
+  return String.fromCodePoint(...[...cc].map((c) => 127397 + c.charCodeAt(0)));
+}
+
+function formatPace(secPerKm?: number): string {
+  if (!secPerKm || !Number.isFinite(secPerKm) || secPerKm <= 0 || secPerKm > 3600) return "—";
+  const m = Math.floor(secPerKm / 60);
+  const s = Math.round(secPerKm % 60);
+  return `${m}'${String(s).padStart(2, "0")}"`;
+}
+
+function km(v?: number): string {
+  if (!Number.isFinite(v)) return "—";
+  return (Number(v) / 1000).toFixed(2);
+}
+
 function renderHud(p: Participant | null) {
   if (!p) {
     hud.classList.add("hidden");
+    hud.innerHTML = "";
     return;
   }
-  hud.classList.remove("hidden");
-  speedEl.textContent = `${p.athlete.speed.toFixed(1)}`;
-  distanceEl.textContent = `${(p.athlete.distance / 1000).toFixed(2)}`;
-  climbEl.textContent = `${Math.round(p.athlete.climb)}`;
+  const on = enabledHud(latest);
+  const items: string[] = [];
+  if (on.bib) items.push(`<div class="hud-item"><span>号牌</span><strong>${escapeHtml(p.bib || "—")}</strong></div>`);
+  if (on.name) items.push(`<div class="hud-item"><span>姓名</span><strong>${escapeHtml(p.name || "—")}</strong></div>`);
+  if (on.nationality) {
+    const iso = (p.nationality || "").toLowerCase();
+    const emoji = flagEmoji(p.nationality);
+    const flag = iso.length === 2
+      ? `<img class="hud-flag-img" alt="${iso}" src="https://flagcdn.com/32x24/${iso}.png"/>`
+      : `<strong class="hud-flag">${emoji || "—"}</strong>`;
+    items.push(`<div class="hud-item"><span>国籍</span>${flag}</div>`);
+  }
+  if (on.speed) {
+    const sp = p.athlete?.source === "lbs" ? 0 : p.athlete.speed;
+    items.push(`<div class="hud-item"><span>时速 km/h</span><strong>${Number(sp || 0).toFixed(1)}</strong></div>`);
+  }
+  const passed = Number.isFinite(p.progress_m) ? p.progress_m : p.athlete.distance;
+  if (on.distance) items.push(`<div class="hud-item"><span>已过 km</span><strong>${km(passed)}</strong></div>`);
+  if (on.remaining) items.push(`<div class="hud-item"><span>剩余 km</span><strong>${km(p.dist_to_finish_m)}</strong></div>`);
+  if (on.pace) items.push(`<div class="hud-item"><span>配速 /km</span><strong>${formatPace(p.pace_s_per_km)}</strong></div>`);
+  if (on.climb) items.push(`<div class="hud-item"><span>累计爬升 m</span><strong>${Math.round(p.cum_climb_m || p.athlete.climb || 0)}</strong></div>`);
+  hud.classList.toggle("hidden", items.length === 0);
+  hud.innerHTML = items.join("");
 }
 
 

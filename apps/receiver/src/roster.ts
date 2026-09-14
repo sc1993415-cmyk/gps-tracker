@@ -9,6 +9,8 @@ export type RosterEntry = {
   bib: string;
   name: string;
   color: string;
+  /** ISO 3166-1 alpha-2, e.g. CN. */
+  nationality?: string;
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -29,6 +31,7 @@ function normalizeEntry(raw: unknown): RosterEntry | null {
     bib: String(o.bib ?? "").trim(),
     name: String(o.name ?? "").trim() || device_id,
     color: String(o.color ?? "").trim() || "#ff3b5c",
+    nationality: String(o.nationality ?? o.nation ?? o.country ?? "").trim().toUpperCase() || undefined,
   };
 }
 
@@ -122,10 +125,10 @@ export function rosterToCsv(entries = getRoster()): string {
     if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
     return s;
   };
-  const lines = ["device_id,imei,bib,name,color"];
+  const lines = ["device_id,imei,bib,name,color,nationality"];
   for (const e of entries) {
     lines.push(
-      [e.device_id, e.imei || "", e.bib || "", e.name || "", e.color || ""].map(esc).join(",")
+      [e.device_id, e.imei || "", e.bib || "", e.name || "", e.color || "", e.nationality || ""].map(esc).join(",")
     );
   }
   return lines.join("\n") + "\n";
@@ -167,6 +170,7 @@ export function importRosterCsv(
   const iImei = idx("imei");
   const iBib = idx("bib");
   const iName = idx("name");
+  const iNat = idx("nationality") >= 0 ? idx("nationality") : idx("nation");
   const iColor = idx("color");
   const rows: RosterEntry[] = [];
   for (let r = 1; r < lines.length; r++) {
@@ -178,6 +182,7 @@ export function importRosterCsv(
       ...(iImei >= 0 && cols[iImei]?.trim() ? { imei: cols[iImei]!.trim() } : {}),
       bib: iBib >= 0 ? (cols[iBib] || "").trim() : "",
       name: iName >= 0 ? (cols[iName] || "").trim() || device_id : device_id,
+      nationality: iNat >= 0 ? (cols[iNat] || "").trim().toUpperCase() : undefined,
       color: iColor >= 0 ? (cols[iColor] || "").trim() || "#ff3b5c" : "#ff3b5c",
     });
   }

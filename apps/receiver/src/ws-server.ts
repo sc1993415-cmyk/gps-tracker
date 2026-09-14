@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from "ws";
 import type { Telemetry } from "../../../packages/schema/src/telemetry.ts";
 
-export type TrailPoint = { lat: number; lng: number; alt_baro: number; ts: number };
+export type TrailPoint = { lat: number; lng: number; alt_baro: number; ts: number; gap?: boolean };
 
 export type CourseFeature = {
   type: "Feature";
@@ -13,6 +13,7 @@ export type Participant = {
   id: string;
   bib: string;
   name: string;
+  nationality?: string;
   color?: string;
   online: boolean;
   athlete: Telemetry;
@@ -23,6 +24,11 @@ export type Participant = {
   dist_to_finish_m?: number;
   off_course?: boolean;
   lap?: number;
+  cum_climb_m?: number;
+  last_alt_m?: number;
+  gps_distance_m?: number;
+  pace_s_per_km?: number;
+
   /** Server receive time (ms since epoch) of any uplink (fix/heartbeat/invalid). */
   last_seen_ms?: number;
   /** Server receive time of last accepted valid=true fix. */
@@ -53,6 +59,11 @@ export type OverlayState = {
   session?: SessionInfo;
   /** Course snap: marker+trail use projected point when within maxMapM. */
   snap?: { enabled: boolean; maxMapM: number };
+  /** Yellow trail / marker teleport break distance. */
+  trailBreak?: { breakM: number };
+  interpDelay?: { enabled: boolean };
+  hudFields?: { id: string; enabled: boolean }[];
+  courseEnds?: { enabled: boolean };
 };
 
 /** Legacy single-athlete shape (kept for docs / shim reference). */

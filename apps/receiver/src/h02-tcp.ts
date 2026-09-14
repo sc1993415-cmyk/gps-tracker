@@ -9,9 +9,12 @@ import {
 } from "./device-sessions.ts";
 import {
   LBS_FRAME_LEN,
+  MT909_BINARY_LEN,
   fullHex,
   looksLikeLbs,
+  looksLikeMt909Binary,
   parseLbs,
+  parseMt909ServingCell,
 } from "./h02-lbs.ts";
 import {
   type DeviceFixState,
@@ -22,6 +25,10 @@ import {
   type FusedFix,
 } from "./h02-fix-select.ts";
 import { ensureCellDbLoaded, lookupCell } from "./cell-lookup.ts";
+import {
+  lookupCellocationCached,
+  requestCellocation,
+} from "./cellocation.ts";
 
 export type TelemetryHandler = (t: Telemetry) => void;
 
@@ -233,6 +240,46 @@ export function buildH02Ack(deviceId: string, now = new Date()): string {
  * Parse H02 ASCII text frame `*HQ,<id>,V1,<HHMMSS>,A/V,<lat>,N/S,<lon>,E/W,<spd>,<course>,<DDMMYY>,...#`
  * (subset of Traccar H02 text). Returns null if not a position sentence.
  */
+/** Pull MCC/MNC/LAC/CI off MT909 *HQ V1/V6 even when GPS flag is V. */
+export function parseH02AsciiCell(sentence: string): {
+  device_id: string;
+  type: string;
+  mcc: number;
+  mnc: number;
+  lac: number;
+  ci: number;
+  gpsValid: boolean;
+  rawHex: string;
+} | null {
+  const text = sentence.replace(/\r/g, "").trim();
+  if (!text.startsWith("*") || !text.includes("#")) return null;
+  const body = text.endsWith("#") ? text.slice(0, -1) : text;
+  const parts = body.split(",");
+  if (parts.length < 14) return null;
+  const device_id = (parts[1] ?? "").trim();
+  const type = (parts[2] ?? "").trim().toUpperCase();
+  if (!/^\d{8,15}$/.test(device_id)) return null;
+  if (!/^V\d+$/i.test(type) && type !== "V1") return null;
+  // *HQ,id,V1,HHMMSS,A/V,lat,NS,lon,EW,spd,course,DDMMYY,status,MCC,MNC,LAC,CI
+  const validFlag = (parts[4] ?? "").toUpperCase();
+  const mcc = Number(parts[13]);
+  const mnc = Number(parts[14]);
+  const lac = Number(parts[15]);
+  const ci = Number(parts[16]);
+  if (!Number.isFinite(mcc) || !Number.isFinite(lac) || !Number.isFinite(ci)) return null;
+  if (ci <= 0) return null;
+  return {
+    device_id,
+    type,
+    mcc,
+    mnc: Number.isFinite(mnc) ? mnc : 0,
+    lac,
+    ci,
+    gpsValid: validFlag === "A" || validFlag === "B",
+    rawHex: Buffer.from(text, "ascii").toString("hex"),
+  };
+}
+
 export function parseH02AsciiText(sentence: string): Telemetry | null {
   const text = sentence.replace(/\r/g, "").trim();
   if (!text.startsWith("*") || !text.includes("#")) return null;
@@ -308,17 +355,27 @@ export function parseH02AsciiText(sentence: string): Telemetry | null {
 
 /** Resolve binary frame length (Traccar H02FrameDecoder: 32 short / 45 long). */
 export function detectH02FrameLength(buf: Buffer, locked: number): number | null {
+  if (buf.length >= 1 && buf[0] !== 0x24) return null;
+  // Official MT909 Normal Data is 73B (0x00..0x48), MCC at 0x21.
+  if (looksLikeMt909Binary(buf) || (buf.length >= MT909_BINARY_LEN && buf.readUInt16BE(0x21) === 460)) {
+    return MT909_BINARY_LEN;
+  }
+  // Wait for the cell tail instead of slicing a 32B GPS-only stub.
+  if (buf.length < MT909_BINARY_LEN) {
+    if (buf.length > H02_MESSAGE_SHORT && buf[H02_MESSAGE_SHORT] === 0x24) {
+      return H02_MESSAGE_SHORT;
+    }
+    if (buf.length < H02_MESSAGE_SHORT) return null;
+    return null;
+  }
   if (locked > 0) return buf.length >= locked ? locked : null;
-  if (buf.length < H02_MESSAGE_SHORT) return null;
   if (buf.length === H02_MESSAGE_LONG) return H02_MESSAGE_LONG;
-  // Concatenated short frames
   if (buf.length > H02_MESSAGE_SHORT && buf[H02_MESSAGE_SHORT] === 0x24) {
     return H02_MESSAGE_SHORT;
   }
   if (buf.length >= H02_MESSAGE_LONG && buf[H02_MESSAGE_LONG] === 0x24) {
     return H02_MESSAGE_LONG;
   }
-  // Prefer short (5-byte id) for real devices like 7026238813
   if (buf.length >= H02_MESSAGE_SHORT) return H02_MESSAGE_SHORT;
   return null;
 }
@@ -343,19 +400,56 @@ function emitLbsIfReady(
 
   let lat = fused.lat;
   let lng = fused.lng;
-  let match: "exact" | "lac" | "lac_any_mnc" | undefined;
+  let match: "exact" | "lac" | "lac_any_mnc" | "cellocation" | undefined;
   let rangeM: number | undefined;
+  let address: string | undefined;
 
-  // Always query local OpenCelliD (exact CI → LAC centroid → any-MNC LAC).
   if (fused.mcc != null && fused.mnc != null && fused.lac != null) {
-    const hit = lookupCell(fused.mcc, fused.mnc, fused.lac, fused.ci);
-    if (hit) {
+    const local = lookupCell(fused.mcc, fused.mnc, fused.lac, fused.ci);
+    if (local) {
       if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-        lat = hit.lat;
-        lng = hit.lng;
+        lat = local.lat;
+        lng = local.lng;
       }
-      match = hit.match;
-      rangeM = hit.range;
+      match = local.match;
+      rangeM = local.range;
+    } else if (fused.ci != null && fused.ci > 0) {
+      const net = lookupCellocationCached(fused.mcc, fused.mnc, fused.lac, fused.ci);
+      if (net) {
+        lat = net.lat;
+        lng = net.lng;
+        match = "cellocation";
+        rangeM = net.range;
+        address = net.address;
+      } else {
+        requestCellocation(fused.mcc, fused.mnc, fused.lac, fused.ci, (hit) => {
+          console.log(
+            `[h02] fused source=lbs id=${id} match=cellocation range_m=${hit.range} ` +
+              `lat=${hit.lat.toFixed(5)} lng=${hit.lng.toFixed(5)} ` +
+              `mcc=${fused.mcc} mnc=${fused.mnc} lac=${fused.lac} ci=${fused.ci}`
+          );
+          onTelemetry({
+            device_id: id,
+            lat: hit.lat,
+            lng: hit.lng,
+            speed: 0,
+            alt_baro: 0,
+            climb: 0,
+            ts: Date.now(),
+            bib: "",
+            name: id,
+            distance: 0,
+            source: "lbs",
+            mcc: fused.mcc,
+            mnc: fused.mnc,
+            lac: fused.lac,
+            ci: fused.ci,
+            lbs_match: "cellocation",
+            lbs_range_m: hit.range,
+            raw_hex: fused.rawHex,
+          });
+        });
+      }
     }
   }
 
@@ -426,6 +520,8 @@ export function startH02TcpServer(
     };
 
     socket.on("data", (chunk: Buffer) => {
+      // Uninterpreted TCP payload from the device (no field decode).
+      console.log("[h02] raw-chunk " + remote + " len=" + chunk.length + " hex=" + chunk.toString("hex"));
       buf = Buffer.concat([buf, chunk]);
 
       while (buf.length > 0) {
@@ -459,6 +555,26 @@ export function startH02TcpServer(
             bindId(pos.device_id);
             const recvMs = Date.now();
             noteGps(fixState, pos, rawHex, recvMs);
+            if (frameLen >= 0x29) {
+              const cell = parseMt909ServingCell(frame);
+              if (cell && cell.mcc != null) {
+                const n1 = cell.neighbors && cell.neighbors[0];
+                const n2 = cell.neighbors && cell.neighbors[1];
+                console.log(
+                  "[h02] mt909-cell id=" + pos.device_id +
+                    " mcc=" + cell.mcc + " mnc=" + cell.mnc +
+                    " lac=" + cell.lac + " ci=" + cell.ci +
+                    " rx=" + cell.rssi +
+                    " n1=" + (n1 ? n1.lac + "/" + n1.ci : "-") +
+                    " n2=" + (n2 ? n2.lac + "/" + n2.ci : "-")
+                );
+                const prev = fixState.lastLbs?.cell;
+                if ((!cell.ci || cell.ci === 0) && prev?.ci && prev.ci > 0 && prev.lac === cell.lac) {
+                  cell.ci = prev.ci;
+                }
+                noteLbs(fixState, cell, recvMs);
+              }
+            }
 
             if (isUsableGps(pos, recvMs)) {
               const t = h02PositionToTelemetry(pos);
@@ -540,6 +656,24 @@ export function startH02TcpServer(
               console.log(`[h02] * heartbeat id=${id}`);
               continue;
             }
+            const cellAscii = parseH02AsciiCell(sentence);
+            if (cellAscii) {
+              bindId(cellAscii.device_id);
+              noteLbs(fixState, {
+                mcc: cellAscii.mcc,
+                mnc: cellAscii.mnc,
+                lac: cellAscii.lac,
+                ci: cellAscii.ci,
+                rawHex: cellAscii.rawHex,
+                truncated: false,
+              });
+              console.log(
+                `[h02] * ascii-cell id=${cellAscii.device_id} type=${cellAscii.type} ` +
+                  `mcc=${cellAscii.mcc} mnc=${cellAscii.mnc} lac=${cellAscii.lac} ci=${cellAscii.ci}`
+              );
+              emitLbsIfReady(selectFix(fixState, Date.now()), cellAscii.device_id, onTelemetry, onPresence);
+              if (sendAck) socket.write(buildH02Ack(cellAscii.device_id));
+            }
             const tel = parseH02AsciiText(sentence);
             if (tel) {
               console.log(
@@ -549,7 +683,7 @@ export function startH02TcpServer(
               tel.source = "gps";
               onTelemetry(tel);
               if (sendAck) socket.write(buildH02Ack(tel.device_id));
-            } else {
+            } else if (!cellAscii) {
               const idMatch = sentence.match(/^\*[^,]+,([^,]+),/);
               if (idMatch) {
                 const id = idMatch[1]!;

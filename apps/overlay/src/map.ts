@@ -20,6 +20,43 @@ const LERP_MIN_MS = 400;
 const LERP_MAX_MS = 8_000;
 const LERP_FACTOR = 0.85;
 
+function haversineM(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/** Split session trail so indoor→GPS teleports do not draw a yellow slash. */
+const DEFAULT_TRAIL_BREAK_M = 60;
+
+function trailLineCoords(
+  trail: { lat: number; lng: number; gap?: boolean }[],
+  breakM = DEFAULT_TRAIL_BREAK_M
+): number[][][] {
+  const segs: number[][][] = [];
+  let cur: number[][] = [];
+  let prev: { lat: number; lng: number } | null = null;
+  for (const pt of trail) {
+    const jump = prev ? haversineM(prev, pt) >= breakM : false;
+    if ((pt.gap || jump) && cur.length) {
+      if (cur.length >= 2) segs.push(cur);
+      cur = [];
+    }
+    cur.push([pt.lng, pt.lat]);
+    prev = pt;
+  }
+  if (cur.length >= 2) segs.push(cur);
+  return segs;
+}
+
 function medianMs(samples: number[]): number {
   if (!samples.length) return 1_000;
   const s = [...samples].sort((a, b) => a - b);
@@ -49,6 +86,8 @@ type MarkerRuntime = {
   lastTargetUpdateMs: number;
   intervalSamples: number[];
   rafId: number;
+  /** GPS samples for one-packet-behind interpolation. */
+  hist: { lat: number; lng: number; t: number }[];
 };
 
 export type MapController = {
@@ -95,6 +134,8 @@ export function createMap(
     features: [],
   };
   let cameraFitted = false;
+  let startFinishMarkers: maplibregl.Marker[] = [];
+  let endsEnabled = true;
 
   function mountOverlayLayers() {
     if (!map.getSource("course")) {
@@ -217,6 +258,7 @@ export function createMap(
       lastTargetUpdateMs: 0,
       intervalSamples: [],
       rafId: 0,
+      hist: [],
     };
     markers.set(id, rt);
     return rt;
@@ -249,6 +291,88 @@ export function createMap(
     }
   }
 
+
+  function clearStartFinish() {
+    for (const m of startFinishMarkers) m.remove();
+    startFinishMarkers = [];
+  }
+
+  function endsDistanceM(a: [number, number], b: [number, number]): number {
+    const R = 6371000;
+    const toRad = (d: number) => (d * Math.PI) / 180;
+    const dLat = toRad(b[1] - a[1]);
+    const dLng = toRad(b[0] - a[0]);
+    const h =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(a[1])) * Math.cos(toRad(b[1])) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+
+  function makeEndMarker(kind: "start" | "finish" | "both"): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "course-end course-end-" + kind;
+    if (kind === "start") {
+      el.innerHTML =
+        '<div class="ce-flag start-flag" aria-hidden="true">' +
+        '<svg viewBox="0 0 32 40" width="32" height="40">' +
+        '<path d="M6 38 V6" stroke="#111" stroke-width="2.4" stroke-linecap="round"/>' +
+        '<path d="M7 7 L26 13 L7 19 Z" fill="#22c55e" stroke="#0b3d1c" stroke-width="1"/>' +
+        "</svg></div>" +
+        '<div class="ce-label start">START</div>';
+    } else if (kind === "finish") {
+      el.innerHTML =
+        '<div class="ce-flag finish-flag" aria-hidden="true">' +
+        '<svg viewBox="0 0 32 40" width="32" height="40">' +
+        '<path d="M6 38 V6" stroke="#111" stroke-width="2.4" stroke-linecap="round"/>' +
+        '<g transform="translate(8,6)">' +
+        '<rect width="18" height="14" fill="#111"/>' +
+        '<rect x="0" y="0" width="4.5" height="4.7" fill="#fff"/>' +
+        '<rect x="9" y="0" width="4.5" height="4.7" fill="#fff"/>' +
+        '<rect x="4.5" y="4.7" width="4.5" height="4.7" fill="#fff"/>' +
+        '<rect x="13.5" y="4.7" width="4.5" height="4.7" fill="#fff"/>' +
+        '<rect x="0" y="9.4" width="4.5" height="4.6" fill="#fff"/>' +
+        '<rect x="9" y="9.4" width="4.5" height="4.6" fill="#fff"/>' +
+        "</g></svg></div>" +
+        '<div class="ce-label finish">FINISH</div>';
+    } else {
+      el.innerHTML =
+        '<div class="ce-flag both-flag" aria-hidden="true">' +
+        '<svg viewBox="0 0 32 40" width="32" height="40">' +
+        '<path d="M6 38 V6" stroke="#111" stroke-width="2.4" stroke-linecap="round"/>' +
+        '<path d="M7 7 L26 13 L7 19 Z" fill="#22c55e" stroke="#0b3d1c" stroke-width="1"/>' +
+        "</svg></div>" +
+        '<div class="ce-label both">S / F</div>';
+    }
+    return el;
+  }
+
+  function placeStartFinish(course: CourseFeature | null | undefined) {
+    clearStartFinish();
+    if (!endsEnabled) return;
+    const coords = course?.geometry?.coordinates;
+    if (!coords || coords.length < 2) return;
+    const start = coords[0] as [number, number];
+    const finish = coords[coords.length - 1] as [number, number];
+    const loop = endsDistanceM(start, finish) < 25;
+    if (loop) {
+      const m = new maplibregl.Marker({ element: makeEndMarker("both"), anchor: "bottom" })
+        .setLngLat(start)
+        .addTo(map);
+      startFinishMarkers.push(m);
+      return;
+    }
+    startFinishMarkers.push(
+      new maplibregl.Marker({ element: makeEndMarker("start"), anchor: "bottom" })
+        .setLngLat(start)
+        .addTo(map)
+    );
+    startFinishMarkers.push(
+      new maplibregl.Marker({ element: makeEndMarker("finish"), anchor: "bottom" })
+        .setLngLat(finish)
+        .addTo(map)
+    );
+  }
+
   function setCourse(course: CourseFeature | null | undefined) {
     lastCourse = course ?? null;
     if (!courseReady) return;
@@ -256,8 +380,10 @@ export function createMap(
     if (!src) return;
     if (course?.geometry?.coordinates?.length) {
       src.setData(course);
+      placeStartFinish(course);
     } else {
       src.setData(emptyLine());
+      clearStartFinish();
     }
   }
 
@@ -282,9 +408,13 @@ export function createMap(
       const hideNonSelected = opts.hideNonSelected;
       const seen = new Set<string>();
 
+      const nextEnds = state.courseEnds?.enabled !== false;
+      const endsChanged = nextEnds !== endsEnabled;
+      endsEnabled = nextEnds;
       setCourse(
         opts.courseOverride !== undefined ? opts.courseOverride : state.course
       );
+      if (endsChanged) placeStartFinish(lastCourse);
 
       const trailFeatures: GeoJSON.Feature[] = [];
 
@@ -309,10 +439,12 @@ export function createMap(
         rt.el.classList.toggle("selected", isSelected);
         rt.el.classList.toggle("hidden-marker", !visible);
         rt.el.classList.toggle("lbs", p.athlete?.source === "lbs");
+        rt.el.classList.toggle("coast", p.athlete?.source === "coast");
 
         const flag = rt.el.querySelector(".athlete-flag") as HTMLElement | null;
         if (flag) {
-          const lbsTag = p.athlete?.source === "lbs" ? " · LBS" : "";
+          const lbsTag =
+            p.athlete?.source === "lbs" ? " · LBS" : p.athlete?.source === "coast" ? " · 推估" : "";
           flag.textContent = isSelected ? `#${p.bib} ${shortName(p.name)}${lbsTag}` : "";
           flag.style.display = isSelected ? "block" : "none";
         }
@@ -321,14 +453,56 @@ export function createMap(
         const ov = opts.positionOverrides?.[p.id];
         const nextLng = ov ? ov.lng : p.athlete.lng;
         const nextLat = ov ? ov.lat : p.athlete.lat;
+        const delayOn =
+          !ov &&
+          state.interpDelay?.enabled !== false &&
+          p.athlete?.source !== "lbs" &&
+          p.athlete?.source !== "coast";
+        const breakM = state.trailBreak?.breakM ?? DEFAULT_TRAIL_BREAK_M;
+        const now = performance.now();
+        const lastH = rt.hist[rt.hist.length - 1];
+        const sampleMoved =
+          !lastH ||
+          Math.abs(nextLng - lastH.lng) > LERP_EPSILON ||
+          Math.abs(nextLat - lastH.lat) > LERP_EPSILON;
+        if (delayOn && sampleMoved) {
+          rt.hist.push({ lat: nextLat, lng: nextLng, t: now });
+          if (rt.hist.length > 8) rt.hist.splice(0, rt.hist.length - 8);
+        }
+        if (!delayOn) rt.hist = [];
+
+        let aimLng = nextLng;
+        let aimLat = nextLat;
+        let aimMs: number | null = null;
+        if (delayOn && rt.hist.length >= 3) {
+          const a = rt.hist[rt.hist.length - 3]!;
+          const b = rt.hist[rt.hist.length - 2]!;
+          aimLng = b.lng;
+          aimLat = b.lat;
+          aimMs = Math.min(LERP_MAX_MS, Math.max(LERP_MIN_MS, b.t - a.t));
+        }
+
         const targetMoved =
-          Math.abs(nextLng - rt.targetLng) > LERP_EPSILON ||
-          Math.abs(nextLat - rt.targetLat) > LERP_EPSILON;
-        if (targetMoved) {
-          const now = performance.now();
+          Math.abs(aimLng - rt.targetLng) > LERP_EPSILON ||
+          Math.abs(aimLat - rt.targetLat) > LERP_EPSILON;
+        const teleportM = haversineM(
+          { lat: rt.displayLat, lng: rt.displayLng },
+          { lat: aimLat, lng: aimLng }
+        );
+        if (teleportM >= breakM) {
+          if (rt.rafId) cancelAnimationFrame(rt.rafId);
+          rt.rafId = 0;
+          rt.displayLng = aimLng;
+          rt.displayLat = aimLat;
+          rt.targetLng = aimLng;
+          rt.targetLat = aimLat;
+          rt.lerpFromLng = aimLng;
+          rt.lerpFromLat = aimLat;
+          rt.marker.setLngLat([aimLng, aimLat]);
+          rt.hist = [{ lat: aimLat, lng: aimLng, t: now }];
+        } else if (targetMoved) {
           if (rt.lastTargetUpdateMs > 0) {
             const gap = now - rt.lastTargetUpdateMs;
-            // >15s = reconnect/sleep gap — skip for T estimate
             if (gap > 0 && gap <= MAX_INTERVAL_FOR_T_MS) {
               rt.intervalSamples.push(gap);
               if (rt.intervalSamples.length > INTERVAL_WINDOW) {
@@ -337,9 +511,9 @@ export function createMap(
             }
           }
           rt.lastTargetUpdateMs = now;
-          rt.lerpMs = lerpMsFromIntervals(rt.intervalSamples);
-          rt.targetLng = nextLng;
-          rt.targetLat = nextLat;
+          rt.lerpMs = aimMs ?? lerpMsFromIntervals(rt.intervalSamples);
+          rt.targetLng = aimLng;
+          rt.targetLat = aimLat;
         }
         const dLng = Math.abs(rt.targetLng - rt.displayLng);
         const dLat = Math.abs(rt.targetLat - rt.displayLat);
@@ -348,14 +522,13 @@ export function createMap(
         }
 
         if (opts.showTrails !== false && visible && p.trail.length >= 2) {
-          trailFeatures.push({
-            type: "Feature",
-            properties: { color, id: p.id, selected: isSelected ? 1 : 0 },
-            geometry: {
-              type: "LineString",
-              coordinates: p.trail.map((pt) => [pt.lng, pt.lat]),
-            },
-          });
+          for (const coords of trailLineCoords(p.trail, state.trailBreak?.breakM ?? DEFAULT_TRAIL_BREAK_M)) {
+            trailFeatures.push({
+              type: "Feature",
+              properties: { color, id: p.id, selected: isSelected ? 1 : 0 },
+              geometry: { type: "LineString", coordinates: coords },
+            });
+          }
         }
 
         if (visible && p.athlete?.source === "lbs") {

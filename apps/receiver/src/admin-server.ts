@@ -33,7 +33,9 @@ import {
   saveListColumns,
   LIST_COLUMN_LABELS,
 } from "./list-columns.ts";
-import { uploadGpx } from "./gpx.ts";
+import { getHudFieldsConfig, setHudFields } from "./hud-fields.ts";
+import { getCourseEndsConfig, setCourseEndsEnabled } from "./course-ends.ts";
+import { uploadGpx, clearPersistedCourse } from "./gpx.ts";
 import {
   getSession,
   setEventName,
@@ -42,7 +44,11 @@ import {
   resetSession,
 } from "./session.ts";
 import { getSnapConfig, setSnapEnabled } from "./snap.ts";
+import { getCoastConfig, setCoastEnabled } from "./course-coast.ts";
+import { getTrailBreakConfig, setTrailBreakM } from "./trail-break.ts";
+import { getInterpDelayConfig, setInterpDelayEnabled } from "./interp-delay.ts";
 import { lookupCell, getCellDbStats, ensureCellDbLoaded } from "./cell-lookup.ts";
+import { getCellocationStats } from "./cellocation.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ADMIN_HTML = path.resolve(__dirname, "../public/admin.html");
@@ -246,6 +252,31 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
         return;
       }
 
+      if (url.pathname === "/api/course-ends" && method === "GET") {
+        sendJson(res, 200, getCourseEndsConfig());
+        return;
+      }
+
+      if (url.pathname === "/api/course-ends" && (method === "PUT" || method === "POST")) {
+        const raw = (await readBody(req)).toString("utf8");
+        const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        const en = body.enabled;
+        sendJson(res, 200, setCourseEndsEnabled(en === true || en === "true" || en === 1));
+        return;
+      }
+
+      if (url.pathname === "/api/hud-fields" && method === "GET") {
+        sendJson(res, 200, getHudFieldsConfig());
+        return;
+      }
+
+      if (url.pathname === "/api/hud-fields" && (method === "PUT" || method === "POST")) {
+        const raw = (await readBody(req)).toString("utf8");
+        const body = raw ? JSON.parse(raw) : {};
+        sendJson(res, 200, setHudFields(body));
+        return;
+      }
+
       if (url.pathname === "/api/list-columns" && method === "GET") {
         sendJson(res, 200, {
           columns: getListColumns(),
@@ -259,6 +290,17 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
         const body = raw ? JSON.parse(raw) : {};
         const payload = body.columns ?? body.listColumns ?? body;
         sendJson(res, 200, { columns: saveListColumns(payload) });
+        return;
+      }
+
+      if (url.pathname === "/api/course" && (method === "DELETE" || method === "POST") && url.searchParams.get("clear") === "1") {
+        const { removed } = clearPersistedCourse();
+        sendJson(res, 200, { ok: true, cleared: true, removed });
+        return;
+      }
+      if (url.pathname === "/api/course/clear" && (method === "POST" || method === "DELETE")) {
+        const { removed } = clearPersistedCourse();
+        sendJson(res, 200, { ok: true, cleared: true, removed });
         return;
       }
 
@@ -306,6 +348,45 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
         return;
       }
 
+      if (url.pathname === "/api/coast" && method === "GET") {
+        sendJson(res, 200, getCoastConfig());
+        return;
+      }
+
+      if (url.pathname === "/api/coast" && (method === "PUT" || method === "POST")) {
+        const raw = (await readBody(req)).toString("utf8");
+        const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        const en = body.enabled;
+        sendJson(res, 200, setCoastEnabled(en === true || en === "true" || en === 1));
+        return;
+      }
+
+      if (url.pathname === "/api/trail-break" && method === "GET") {
+        sendJson(res, 200, getTrailBreakConfig());
+        return;
+      }
+
+      if (url.pathname === "/api/trail-break" && (method === "PUT" || method === "POST")) {
+        const raw = (await readBody(req)).toString("utf8");
+        const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        const n = Number(body.breakM ?? body.m ?? body.value);
+        sendJson(res, 200, setTrailBreakM(n));
+        return;
+      }
+
+      if (url.pathname === "/api/interp-delay" && method === "GET") {
+        sendJson(res, 200, getInterpDelayConfig());
+        return;
+      }
+
+      if (url.pathname === "/api/interp-delay" && (method === "PUT" || method === "POST")) {
+        const raw = (await readBody(req)).toString("utf8");
+        const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        const en = body.enabled;
+        sendJson(res, 200, setInterpDelayEnabled(en === true || en === "true" || en === 1));
+        return;
+      }
+
       if (url.pathname === "/api/session" && method === "GET") {
         sendJson(res, 200, getSession());
         return;
@@ -331,6 +412,11 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
 
       if (url.pathname === "/api/session/reset" && method === "POST") {
         sendJson(res, 200, resetSession());
+        return;
+      }
+
+      if (url.pathname === "/api/cellocation" && method === "GET") {
+        sendJson(res, 200, getCellocationStats());
         return;
       }
 
@@ -372,8 +458,26 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
           sendJson(res, 400, { error: "device_id required" });
           return;
         }
+        const rawCmd = String(body.raw ?? body.command ?? "").trim();
+        if (rawCmd) {
+          const sent = sendRawCommand(deviceId, rawCmd);
+          if (!sent.ok) {
+            sendJson(res, 400, { error: sent.error });
+            return;
+          }
+          sendJson(res, 200, {
+            ok: true,
+            device_id: deviceId,
+            cmd: "raw",
+            command: rawCmd,
+            online: isDeviceOnline(deviceId),
+            queued: sent.queued,
+            receipt: sent.receipt,
+          });
+          return;
+        }
         if (cmd !== "freq" && cmd !== "ip" && cmd !== "cq") {
-          sendJson(res, 400, { error: "cmd must be freq | ip | cq" });
+          sendJson(res, 400, { error: "cmd must be freq | ip | cq, or pass raw" });
           return;
         }
         let commandText: string;
@@ -419,7 +523,7 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
 
   server.listen(port, () => {
     console.log(
-      `[admin] UI http://localhost:${port}/  (API /api/session /api/roster /api/discovered /api/command /api/command/receipts /api/map-style /api/list-columns /api/course/gpx)`
+      `[admin] UI http://localhost:${port}/  (API /api/session /api/roster /api/discovered /api/command /api/command/receipts /api/map-style /api/list-columns /api/course/gpx /api/snap /api/coast)`
     );
   });
   server.on("error", (err) => {

@@ -1,0 +1,12 @@
+{
+  "fields": {
+    "bib": true,
+    "name": true,
+    "nationality": true,
+    "speed": true,
+    "distance": true,
+    "remaining": true,
+    "pace": true,
+    "climb": true
+  }
+}

@@ -3,11 +3,11 @@
     "bib": true,
     "name": true,
     "progress": true,
-    "speed": false,
+    "speed": true,
     "battery": true,
     "online": true,
-    "lastUpdate": false,
-    "offCourse": false
+    "lastUpdate": true,
+    "offCourse": true
   },
   "listColumns": [
     {
@@ -24,7 +24,7 @@
     },
     {
       "id": "speed",
-      "enabled": false
+      "enabled": true
     },
     {
       "id": "battery",
@@ -36,11 +36,11 @@
     },
     {
       "id": "lastUpdate",
-      "enabled": false
+      "enabled": true
     },
     {
       "id": "offCourse",
-      "enabled": false
+      "enabled": true
     }
   ]
 }

@@ -21,7 +21,7 @@ export type Telemetry = {
   raw_lat?: number;
   raw_lng?: number;
   /** Fix source after GPS/LBS selection. */
-  source?: "gps" | "lbs";
+  source?: "gps" | "lbs" | "coast";
   mcc?: number;
   mnc?: number;
   lac?: number;

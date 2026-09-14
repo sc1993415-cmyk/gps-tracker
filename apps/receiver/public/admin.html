@@ -6,14 +6,15 @@
     <title>选手名册管理</title>
     <style>
       :root {
-        --bg: #0b0f14;
-        --panel: rgba(8, 12, 18, 0.92);
-        --border: rgba(255, 255, 255, 0.1);
-        --text: #fff;
-        --muted: rgba(255, 255, 255, 0.55);
-        --accent: #ff3b5c;
+        --bg: #071427;
+        --bg-2: #0b2a4a;
+        --panel: rgba(10, 28, 52, 0.78);
+        --border: rgba(140, 190, 255, 0.16);
+        --text: #eef5ff;
+        --muted: rgba(190, 214, 245, 0.62);
+        --accent: #3d8bfd;
         --ok: #7cffb2;
-        --input: rgba(255, 255, 255, 0.06);
+        --input: rgba(120, 170, 230, 0.08);
       }
       * { box-sizing: border-box; }
       html, body {
@@ -21,7 +22,14 @@
         background: var(--bg); color: var(--text);
         font: 14px/1.45 system-ui, "PingFang SC", "Noto Sans SC", sans-serif;
       }
-      body { padding: 24px 16px 48px; }
+      body {
+        padding: 24px 16px 48px;
+        background:
+          radial-gradient(1200px 600px at 12% -10%, rgba(56, 132, 255, 0.28), transparent 55%),
+          radial-gradient(900px 500px at 110% 8%, rgba(20, 80, 160, 0.35), transparent 50%),
+          linear-gradient(180deg, #0a1c38 0%, #071427 42%, #06101f 100%);
+        background-attachment: fixed;
+      }
       .wrap { max-width: 920px; margin: 0 auto; }
       h1 {
         margin: 0 0 6px; font: 700 22px/1.2 system-ui, "PingFang SC", sans-serif;
@@ -120,6 +128,21 @@
         cursor: pointer;
       }
       .check-grid input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+
+      .panel.pinned h2 { cursor: default; }
+      .panel:not(.pinned) > h2 {
+        cursor: pointer; user-select: none;
+        display: flex; align-items: center; justify-content: space-between;
+        margin: 0; padding: 2px 0;
+      }
+      .panel:not(.pinned) > h2::after {
+        content: "▾";
+        font-size: 12px; opacity: 0.55; letter-spacing: 0;
+      }
+      .panel.collapsed > h2::after { content: "▸"; }
+      .panel.collapsed { padding-bottom: 12px; }
+      .panel.collapsed > *:not(h2) { display: none !important; }
+      .panel-stack { display: flex; flex-direction: column; gap: 0; }
       input[type="file"] {
         width: 100%;
         border: 1px solid var(--border);
@@ -136,8 +159,76 @@
       <h1>选手名册</h1>
       <p class="sub">主键用 H02 设备号（如 <code>7026238813</code>），可选填贴纸 IMEI 别名。陌生设备进「待确认」后一键添加。支持 CSV 导入导出。</p>
 
+<div class="panel pinned">
+        <h2>添加 / 编辑</h2>
+        <form id="form" class="grid" autocomplete="off">
+          <label>
+            H02 设备号
+            <input id="device_id" type="text" required placeholder="7026238813" />
+          </label>
+          <label>
+            IMEI 别名（可选）
+            <input id="imei" type="text" placeholder="15 位贴纸号" />
+          </label>
+          <label>
+            号码牌
+            <input id="bib" type="text" placeholder="42" />
+          </label>
+          <label>
+            姓名
+            <input id="name" type="text" placeholder="张三" />
+          </label>
+          <label>
+            国籍 ISO（如 CN / US / JP）
+            <input id="nationality" type="text" maxlength="2" placeholder="CN" />
+          </label>
+          <label>
+            颜色
+            <input id="color" type="color" value="#ff3b5c" />
+          </label>
+          <div class="actions span-all">
+            <button type="submit" class="primary">保存</button>
+            <button type="button" id="btn-clear">清空表单</button>
+            <button type="button" id="btn-reload">刷新列表</button>
+          </div>
+        </form>
+        <div id="status"></div>
+      </div>
 
-      <div class="panel">
+<div class="panel pinned">
+        <h2>当前名册</h2>
+        <div id="list-wrap">
+          <p class="empty">加载中…</p>
+        </div>
+      </div>
+
+<div class="panel collapsed">
+        <h2>待确认设备（自动发现）</h2>
+        <p class="sub" style="margin-top:0">陌生 H02 ID 解析成功且坐标合理、见到 ≥3 次后出现在此。不进直播图；一键添加后改姓名即可。可忽略脏 ID。</p>
+        <div class="actions" style="margin-bottom:10px">
+          <button type="button" id="btn-discovered-reload">刷新待确认</button>
+        </div>
+        <div id="discovered-wrap"><p class="empty">加载中…</p></div>
+        <div id="discovered-status"></div>
+      </div>
+
+<div class="panel collapsed">
+        <h2>名单导入 / 导出</h2>
+        <p class="sub" style="margin-top:0">CSV 列：<code>device_id,imei,bib,name,color</code>。导出后批量改再导回；默认合并，勾选可整表替换。</p>
+        <div class="actions">
+          <a class="primary" id="btn-csv-export" href="/api/roster.csv" style="display:inline-flex;align-items:center;text-decoration:none;padding:10px 16px;border-radius:8px;">导出 CSV</a>
+          <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="file" id="csv_file" accept=".csv,text/csv" />
+          </label>
+          <label style="display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;">
+            <input type="checkbox" id="csv_replace" /> 整表替换
+          </label>
+          <button type="button" class="primary" id="btn-csv-import">导入</button>
+        </div>
+        <div id="csv-status"></div>
+      </div>
+
+<div class="panel collapsed">
         <h2>活动 / 轨迹场次</h2>
         <p class="sub" style="margin-top:0">开始后才记本场轨迹；结束可回放；重置清空本场点（名单/GPX 不动）。叠层左上显示活动名与 LIVE。</p>
         <form id="event-name-form" class="grid" style="grid-template-columns: 1.6fr auto;" autocomplete="off">
@@ -158,41 +249,108 @@
         <div id="session-status" class="sub" style="margin-top:8px"></div>
       </div>
 
-      <div class="panel">
-        <h2>添加 / 编辑</h2>
-        <form id="form" class="grid" autocomplete="off">
+<div class="panel collapsed">
+        <h2>赛道 GPX 上传</h2>
+        <p class="sub" style="margin-top:0">上传 GPX（trkpt / rtept），自动简化相邻 &lt;8m 点并写入 overlay <code>public/course.geojson</code> 与 receiver <code>data/course.geojson</code>，接收端热重建 CourseIndex。</p>
+        <form id="gpx-form" class="grid" style="grid-template-columns: 1.6fr auto;" autocomplete="off">
           <label>
-            H02 设备号
-            <input id="device_id" type="text" required placeholder="7026238813" />
+            GPX 文件
+            <input id="gpx_file" type="file" accept=".gpx,application/gpx+xml,text/xml,application/xml" />
           </label>
-          <label>
-            IMEI 别名（可选）
-            <input id="imei" type="text" placeholder="15 位贴纸号" />
+          <div class="actions">
+            <button type="submit" class="primary">上传赛道</button>
+            <button type="button" id="btn-course-clear">清除赛道</button>
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:12px;">
+            <input type="checkbox" id="course_ends_enabled" checked />
+            显示起点 / 终点图标
           </label>
-          <label>
-            号码牌
-            <input id="bib" type="text" placeholder="42" />
-          </label>
-          <label>
-            姓名
-            <input id="name" type="text" placeholder="张三" />
-          </label>
-          <label>
-            颜色
-            <input id="color" type="color" value="#ff3b5c" />
-          </label>
-          <div class="actions span-all">
-            <button type="submit" class="primary">保存</button>
-            <button type="button" id="btn-clear">清空表单</button>
-            <button type="button" id="btn-reload">刷新列表</button>
+          <div class="actions" style="margin-top:8px">
+            <button type="button" class="primary" id="btn-course-ends-save">保存起终点显示</button>
+          </div>
+          <div id="course-ends-status" class="sub" style="margin-top:6px"></div>
+          <div class="actions" style="display:none">
           </div>
         </form>
-        <div id="status"></div>
+        <div id="gpx-status"></div>
       </div>
 
+<div class="panel collapsed">
+        <h2>赛道吸附</h2>
+        <p class="sub" style="margin-top:0">默认开启：距 GPX 约 100m 内 marker 与轨迹贴红线；偏航超过阈值跟原始 GPS。关则始终跟真机坐标。</p>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="snap_enabled" checked />
+          启用赛道吸附
+        </label>
+        <div class="actions" style="margin-top:10px">
+          <button type="button" class="primary" id="btn-snap-save">保存</button>
+        </div>
+        <div id="snap-status" class="sub" style="margin-top:8px"></div>
+      </div>
 
+<div class="panel collapsed">
+        <h2>赛道推估（丢星）</h2>
+        <p class="sub" style="margin-top:0">开启后：GPS 丢失且进洞前速度 ≥ 8 km/h 时，沿 GPX 按最后速度往前推。关闭则丢星走 LBS（OpenCelliD）。静止或无赛道时不会推。GPS 恢复自动取消。</p>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="coast_enabled" />
+          启用赛道推估
+        </label>
+        <div class="actions" style="margin-top:10px">
+          <button type="button" class="primary" id="btn-coast-save">保存</button>
+        </div>
+        <div id="coast-status" class="sub" style="margin-top:8px"></div>
+      </div>
 
-      <div class="panel">
+<div class="panel collapsed">
+        <h2>轨迹跳点断开</h2>
+        <p class="sub" style="margin-top:0">相邻两点或标记位移超过该距离（米）时，黄色轨迹断开、标记直接落下，不再滑过整张图。用于室内 LBS/推估恢复 GPS。范围 10–5000 m，默认 60。</p>
+        <label>
+          断开距离（米）
+          <input id="trail_break_m" type="number" min="10" max="5000" step="10" value="60" />
+        </label>
+        <div class="actions" style="margin-top:10px">
+          <button type="button" class="primary" id="btn-trail-break-save">保存</button>
+        </div>
+        <div id="trail-break-status" class="sub" style="margin-top:8px"></div>
+      </div>
+
+<div class="panel collapsed">
+        <h2>高速平滑（晚一包插值）</h2>
+        <p class="sub" style="margin-top:0">开启后叠层标记不追最新包，用 T-2 与 T-1 两包之间做匀速运动，画面固定晚约 1 个包。90–100 km/h 更稳。LBS/跳点仍瞬移。关闭则恢复追最新点。</p>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="interp_delay_enabled" checked />
+          启用晚一包插值
+        </label>
+        <div class="actions" style="margin-top:10px">
+          <button type="button" class="primary" id="btn-interp-delay-save">保存</button>
+        </div>
+        <div id="interp-delay-status" class="sub" style="margin-top:8px"></div>
+      </div>
+
+<div class="panel collapsed">
+        <h2>叠层底部数据</h2>
+        <p class="sub" style="margin-top:0">控制 4173 主页面底部 HUD 显示哪些字段。爬升是 GPS 海拔正增量累计（设备当前不报海拔时为 0）。配速按开赛后已过里程计算。</p>
+        <div id="hud-fields-checks" class="check-grid"></div>
+        <div class="actions" style="margin-top:10px">
+          <button type="button" class="primary" id="btn-hud-fields-save">保存底部数据</button>
+          <button type="button" id="btn-hud-fields-reload">刷新</button>
+        </div>
+        <div id="hud-fields-status" class="sub" style="margin-top:8px"></div>
+      </div>
+
+<div id="list-columns-checks" class="check-grid"></div>
+        <div class="actions">
+          <button type="button" class="primary" id="btn-list-columns-save">保存列配置</button>
+          <button type="button" id="btn-list-columns-reload">刷新</button>
+        </div>
+        <div id="list-columns-status"></div>
+      </div>
+
+<div class="panel collapsed">
+        <h2>选手列表列（叠层）</h2>
+        <p class="sub" style="margin-top:0">勾选叠层选手列表要显示的字段。默认：号码牌、姓名、进度、在线、电量。保存后经 WS 热更新。</p>
+
+<div class="panel collapsed">
         <h2>底图（OpenFreeMap / OSM）</h2>
         <p class="sub" style="margin-top:0">默认 Positron 浅底；Liberty 偏路网。WGS84，无需 GCJ 偏移。叠层经 WS 热更新；也可用 <code>#style=positron</code> / <code>#style=liberty</code> 覆盖。</p>
         <form id="map-style-form" class="grid" style="grid-template-columns: 1.4fr auto;" autocomplete="off">
@@ -210,7 +368,7 @@
         <div id="map-style-status"></div>
       </div>
 
-      <div class="panel">
+<div class="panel collapsed">
         <h2>设备指令下发（MT909 官方短信原文 → TCP）</h2>
         <p class="sub" style="margin-top:0">在线设备走 5013 长连接原样下发；离线则排队，重连后自动 flush。909 未必回明文 OK，超时≠一定失败。</p>
         <form id="cmd-form" class="grid" style="grid-template-columns: 1.2fr 0.7fr 0.7fr 0.9fr 0.6fr auto;" autocomplete="off">
@@ -275,83 +433,14 @@
         </div>
       </div>
 
-
-      <div class="panel">
-        <h2>选手列表列（叠层）</h2>
-        <p class="sub" style="margin-top:0">勾选叠层选手列表要显示的字段。默认：号码牌、姓名、进度、在线、电量。保存后经 WS 热更新。</p>
-        <div id="list-columns-checks" class="check-grid"></div>
-        <div class="actions">
-          <button type="button" class="primary" id="btn-list-columns-save">保存列配置</button>
-          <button type="button" id="btn-list-columns-reload">刷新</button>
-        </div>
-        <div id="list-columns-status"></div>
-      </div>
-
-
-      <div class="panel">
-        <h2>赛道吸附</h2>
-        <p class="sub" style="margin-top:0">默认开启：距 GPX 约 100m 内 marker 与轨迹贴红线；偏航超过阈值跟原始 GPS。关则始终跟真机坐标。</p>
-        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-          <input type="checkbox" id="snap_enabled" checked />
-          启用赛道吸附
-        </label>
-        <div class="actions" style="margin-top:10px">
-          <button type="button" class="primary" id="btn-snap-save">保存</button>
-        </div>
-        <div id="snap-status" class="sub" style="margin-top:8px"></div>
-      </div>
-
-      <div class="panel">
-        <h2>赛道 GPX 上传</h2>
-        <p class="sub" style="margin-top:0">上传 GPX（trkpt / rtept），自动简化相邻 &lt;8m 点并写入 overlay <code>public/course.geojson</code> 与 receiver <code>data/course.geojson</code>，接收端热重建 CourseIndex。</p>
-        <form id="gpx-form" class="grid" style="grid-template-columns: 1.6fr auto;" autocomplete="off">
-          <label>
-            GPX 文件
-            <input id="gpx_file" type="file" accept=".gpx,application/gpx+xml,text/xml,application/xml" />
-          </label>
-          <div class="actions">
-            <button type="submit" class="primary">上传赛道</button>
-          </div>
-        </form>
-        <div id="gpx-status"></div>
-      </div>
-
-
-      <div class="panel">
-        <h2>待确认设备（自动发现）</h2>
-        <p class="sub" style="margin-top:0">陌生 H02 ID 解析成功且坐标合理、见到 ≥3 次后出现在此。不进直播图；一键添加后改姓名即可。可忽略脏 ID。</p>
-        <div class="actions" style="margin-bottom:10px">
-          <button type="button" id="btn-discovered-reload">刷新待确认</button>
-        </div>
-        <div id="discovered-wrap"><p class="empty">加载中…</p></div>
-        <div id="discovered-status"></div>
-      </div>
-
-      <div class="panel">
-        <h2>名单导入 / 导出</h2>
-        <p class="sub" style="margin-top:0">CSV 列：<code>device_id,imei,bib,name,color</code>。导出后批量改再导回；默认合并，勾选可整表替换。</p>
-        <div class="actions">
-          <a class="primary" id="btn-csv-export" href="/api/roster.csv" style="display:inline-flex;align-items:center;text-decoration:none;padding:10px 16px;border-radius:8px;">导出 CSV</a>
-          <label style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;">
-            <input type="file" id="csv_file" accept=".csv,text/csv" />
-          </label>
-          <label style="display:inline-flex;align-items:center;gap:6px;color:var(--muted);font-size:13px;">
-            <input type="checkbox" id="csv_replace" /> 整表替换
-          </label>
-          <button type="button" class="primary" id="btn-csv-import">导入</button>
-        </div>
-        <div id="csv-status"></div>
-      </div>
-
-      <div class="panel">
-        <h2>当前名册</h2>
-        <div id="list-wrap">
-          <p class="empty">加载中…</p>
-        </div>
-      </div>
-    </div>
     <script>
       const $ = (id) => document.getElementById(id);
+
+      document.querySelectorAll(".panel:not(.pinned) > h2").forEach((h) => {
+        h.addEventListener("click", () => h.parentElement.classList.toggle("collapsed"));
+      });
+
+
       const statusEl = $("status");
 
       function setStatus(msg, kind) {
@@ -364,6 +453,7 @@
         $("imei").value = entry?.imei || "";
         $("bib").value = entry?.bib || "";
         $("name").value = entry?.name || "";
+        if ($("nationality")) $("nationality").value = entry?.nationality || "";
         $("color").value = entry?.color || "#ff3b5c";
       }
 
@@ -555,6 +645,7 @@
           imei: $("imei").value.trim(),
           bib: $("bib").value.trim(),
           name: $("name").value.trim(),
+            nationality: ($("nationality") && $("nationality").value.trim().toUpperCase()) || undefined,
           color: $("color").value,
         };
         if (!entry.device_id) {
@@ -886,6 +977,178 @@
       }
       loadSnap();
 
+      async function loadHudFields() {
+        const wrap = $("hud-fields-checks");
+        const st = $("hud-fields-status");
+        if (!wrap) return;
+        try {
+          const data = await api("/api/hud-fields");
+          const fields = data.hudFields || [];
+          wrap.innerHTML = fields.map((f) =>
+            `<label style="display:flex;align-items:center;gap:8px;"><input type="checkbox" data-hud="${f.id}" ${f.enabled ? "checked" : ""}/> ${f.label}</label>`
+          ).join("");
+          if (st) { st.textContent = "已加载"; st.className = "ok"; }
+        } catch (err) {
+          if (st) { st.textContent = String(err.message || err); st.className = "err"; }
+        }
+      }
+      if ($("btn-hud-fields-save")) {
+        $("btn-hud-fields-save").addEventListener("click", async () => {
+          const st = $("hud-fields-status");
+          try {
+            const hudFields = Array.from(document.querySelectorAll("[data-hud]")).map((el) => ({
+              id: el.getAttribute("data-hud"),
+              enabled: el.checked,
+            }));
+            await api("/api/hud-fields", { method: "PUT", body: JSON.stringify({ hudFields }) });
+            if (st) { st.textContent = "已保存，叠层热更新"; st.className = "ok"; }
+          } catch (err) {
+            if (st) { st.textContent = String(err.message || err); st.className = "err"; }
+          }
+        });
+      }
+      if ($("btn-hud-fields-reload")) $("btn-hud-fields-reload").addEventListener("click", loadHudFields);
+      loadHudFields();
+
+      async function loadCourseEnds() {
+        try {
+          const s = await api("/api/course-ends");
+          if ($("course_ends_enabled")) $("course_ends_enabled").checked = s.enabled !== false;
+          const el = $("course-ends-status");
+          if (el) { el.textContent = s.enabled ? "开 · 地图显示 START/FINISH" : "关 · 不显示起终点图标"; el.className = "ok"; }
+        } catch (err) {
+          const el = $("course-ends-status");
+          if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+        }
+      }
+      if ($("btn-course-ends-save")) {
+        $("btn-course-ends-save").addEventListener("click", async () => {
+          try {
+            const s = await api("/api/course-ends", {
+              method: "PUT",
+              body: JSON.stringify({ enabled: !!$("course_ends_enabled").checked }),
+            });
+            const el = $("course-ends-status");
+            if (el) { el.textContent = s.enabled ? "已保存：显示起终点" : "已保存：隐藏起终点"; el.className = "ok"; }
+          } catch (err) {
+            const el = $("course-ends-status");
+            if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+          }
+        });
+      }
+      loadCourseEnds();
+
+
+
+      async function loadInterpDelay() {
+        try {
+          const s = await api("/api/interp-delay");
+          if ($("interp_delay_enabled")) $("interp_delay_enabled").checked = s.enabled !== false;
+          const el = $("interp-delay-status");
+          if (el) {
+            el.textContent = s.enabled ? "开 · 画面晚一包，高速更稳" : "关 · 标记追最新包";
+            el.className = "ok";
+          }
+        } catch (err) {
+          const el = $("interp-delay-status");
+          if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+        }
+      }
+      if ($("btn-interp-delay-save")) {
+        $("btn-interp-delay-save").addEventListener("click", async () => {
+          try {
+            const s = await api("/api/interp-delay", {
+              method: "PUT",
+              body: JSON.stringify({ enabled: !!$("interp_delay_enabled").checked }),
+            });
+            const el = $("interp-delay-status");
+            if (el) {
+              el.textContent = s.enabled ? "已保存：晚一包插值开" : "已保存：晚一包插值关";
+              el.className = "ok";
+            }
+          } catch (err) {
+            const el = $("interp-delay-status");
+            if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+          }
+        });
+      }
+      loadInterpDelay();
+
+
+      async function loadTrailBreak() {
+        try {
+          const s = await api("/api/trail-break");
+          if ($("trail_break_m")) $("trail_break_m").value = s.breakM || 60;
+          const el = $("trail-break-status");
+          if (el) {
+            el.textContent = "当前 " + (s.breakM || 60) + " m · 超过则断开黄线";
+            el.className = "ok";
+          }
+        } catch (err) {
+          const el = $("trail-break-status");
+          if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+        }
+      }
+      if ($("btn-trail-break-save")) {
+        $("btn-trail-break-save").addEventListener("click", async () => {
+          try {
+            const n = Number($("trail_break_m").value);
+            const s = await api("/api/trail-break", {
+              method: "PUT",
+              body: JSON.stringify({ breakM: n }),
+            });
+            const el = $("trail-break-status");
+            if (el) {
+              el.textContent = "已保存：" + s.breakM + " m";
+              el.className = "ok";
+            }
+          } catch (err) {
+            const el = $("trail-break-status");
+            if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+          }
+        });
+      }
+      loadTrailBreak();
+
+
+      // --- course coast ---
+      async function loadCoast() {
+        try {
+          const s = await api("/api/coast");
+          if ($("coast_enabled")) $("coast_enabled").checked = s.enabled === true;
+          const el = $("coast-status");
+          if (el) {
+            el.textContent = s.enabled
+              ? ("推估开 · 门槛 " + (s.minKmh || 8) + " km/h · 丢星沿赛道走")
+              : "推估关 · 丢星用 LBS";
+            el.className = "ok";
+          }
+        } catch (err) {
+          const el = $("coast-status");
+          if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+        }
+      }
+      if ($("btn-coast-save")) {
+        $("btn-coast-save").addEventListener("click", async () => {
+          try {
+            const s = await api("/api/coast", {
+              method: "PUT",
+              body: JSON.stringify({ enabled: !!$("coast_enabled").checked }),
+            });
+            const el = $("coast-status");
+            if (el) {
+              el.textContent = s.enabled ? "已保存：推估开（丢星沿赛道）" : "已保存：推估关（丢星用 LBS）";
+              el.className = "ok";
+            }
+          } catch (err) {
+            const el = $("coast-status");
+            if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+          }
+        });
+      }
+      loadCoast();
+
+
 
 
       loadListColumns();
@@ -917,6 +1180,21 @@
           if (!res.ok) throw new Error((data && data.error) || res.statusText || "上传失败");
           const km = (Number(data.totalM) / 1000).toFixed(2);
           setGpxStatus(`已上传：${data.pointCount} 点，全长 ${data.totalM} m（${km} km），来源 ${data.source}`, "ok");
+        } catch (err) {
+          setGpxStatus(err.message || String(err), "err");
+        }
+      });
+
+      $("btn-course-clear")?.addEventListener("click", async () => {
+        if (!confirm("确定清除当前赛道？叠层红线会消失，丢星推估也会停用。")) return;
+        try {
+          setGpxStatus("清除中…");
+          const res = await fetch("/api/course/clear", { method: "POST" });
+          const raw = await res.text();
+          let data = null;
+          try { data = raw ? JSON.parse(raw) : null; } catch { data = raw; }
+          if (!res.ok) throw new Error((data && data.error) || res.statusText || "清除失败");
+          setGpxStatus("已清除当前赛道", "ok");
         } catch (err) {
           setGpxStatus(err.message || String(err), "err");
         }

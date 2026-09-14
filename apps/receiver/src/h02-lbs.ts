@@ -18,6 +18,8 @@
  */
 
 export const LBS_FRAME_LEN = 41;
+/** MT909 binary Normal Data: offsets 0x00..0x48 inclusive. */
+export const MT909_BINARY_LEN = 73;
 /** China MCC — signature used to recognize LBS without 0x24. */
 export const LBS_MCC_CN = 460;
 
@@ -31,6 +33,7 @@ export type LbsCell = {
   rawHex: string;
   /** True when frame was shorter than 41 in tests / truncated logs. */
   truncated: boolean;
+  neighbors?: { lac: number; ci: number; rx?: number }[];
 };
 
 export function fullHex(buf: Buffer): string {
@@ -85,4 +88,49 @@ export function parseLbs(buf: Buffer): LbsCell | null {
   // rssi: TODO — offsets 10..40 unknown until full 41B hex is logged
 
   return { mcc, mnc, lac, ci, rawHex, truncated };
+}
+
+
+/** True when buffer is a full MT909 73B record (\$ + MCC 460 at 0x21). */
+export function looksLikeMt909Binary(buf: Buffer): boolean {
+  if (buf.length < MT909_BINARY_LEN) return false;
+  if (buf[0] !== 0x24) return false;
+  return buf.readUInt16BE(0x21) === LBS_MCC_CN;
+}
+
+/**
+ * Serving + neighbor cells from official MT909 Normal Data offsets:
+ *   0x21-0x22 MCC, 0x23 MNC, 0x24-0x25 LAC, 0x26-0x27 CI (u16 BE), 0x28 RX
+ *   0x29-0x2C / 0x2E-0x32 neighbor LAC+CI+RX
+ */
+export function parseMt909ServingCell(buf: Buffer): LbsCell | null {
+  if (buf.length < 0x29 || buf[0] !== 0x24) return null;
+  const mcc = buf.readUInt16BE(0x21);
+  const mnc = buf[0x23]!;
+  const lac = buf.readUInt16BE(0x24);
+  let ci = buf.readUInt16BE(0x26);
+  const rssi = buf[0x28]!;
+  const neighbors: { lac: number; ci: number; rx?: number }[] = [];
+  if (buf.length >= 0x2e) {
+    neighbors.push({ lac: buf.readUInt16BE(0x29), ci: buf.readUInt16BE(0x2b), rx: buf[0x2d] });
+  }
+  if (buf.length >= 0x33) {
+    neighbors.push({ lac: buf.readUInt16BE(0x2e), ci: buf.readUInt16BE(0x30), rx: buf[0x32] });
+  }
+  if (!ci) {
+    const n = neighbors.find((x) => x.ci);
+    if (n) {
+      ci = n.ci;
+    }
+  }
+  return {
+    mcc,
+    mnc,
+    lac,
+    ci,
+    rssi,
+    neighbors,
+    rawHex: fullHex(buf),
+    truncated: buf.length < MT909_BINARY_LEN,
+  };
 }

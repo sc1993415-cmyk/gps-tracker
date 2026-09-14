@@ -15,10 +15,17 @@ function haversineM(a: TrailPoint, b: TrailPoint) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
-export function pushTrailPoint(trail: TrailPoint[], p: TrailPoint, max = 2000) {
+export function pushTrailPoint(
+  trail: TrailPoint[],
+  p: TrailPoint,
+  max = 2000,
+  breakM = 60
+) {
   const last = trail[trail.length - 1];
-  if (!last || haversineM(last, p) >= MIN_M || p.ts - last.ts >= 1000) {
-    trail.push(p);
+  const dist = last ? haversineM(last, p) : 0;
+  const gap = !!(p.gap || (last && dist >= breakM));
+  if (!last || gap || dist >= MIN_M || p.ts - last.ts >= 1000) {
+    trail.push({ ...p, gap });
     if (trail.length > max) trail.splice(0, trail.length - max);
   }
   return trail;
