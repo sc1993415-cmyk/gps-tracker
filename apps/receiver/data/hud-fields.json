@@ -3,10 +3,10 @@
     "bib": true,
     "name": true,
     "nationality": true,
-    "speed": true,
-    "distance": true,
+    "speed": false,
+    "distance": false,
     "remaining": true,
     "pace": true,
-    "climb": true
+    "climb": false
   }
 }

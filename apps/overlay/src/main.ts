@@ -98,6 +98,34 @@ window.addEventListener("hashchange", () => {
   render();
 });
 
+
+const prevRank = new Map<string, number>();
+
+function haversineM(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const R = 6371000;
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const h =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function finishCoord(state: OverlayState): [number, number] | null {
+  const coords = state.course?.geometry?.coordinates;
+  if (!coords || !coords.length) return null;
+  const last = coords[coords.length - 1];
+  if (!last || last.length < 2) return null;
+  return [last[0], last[1]];
+}
+
+function rankableFix(p: Participant): boolean {
+  const src = p.athlete?.source;
+  if (src === "lbs") return false;
+  return Number.isFinite(p.athlete?.lat) && Math.abs(p.athlete.lat) + Math.abs(p.athlete.lng) > 1e-6;
+}
+
 function shortName(name: string): string {
   return name.length > 14 ? name.slice(0, 13) + "…" : name;
 }
@@ -194,9 +222,30 @@ function formatBattery(p: Participant): string {
 
 function renderList(participants: Participant[], selected: string | null, state: OverlayState) {
   const cols = enabledColumns(state);
-  const sorted = [...participants].sort((a, b) =>
-    a.bib.localeCompare(b.bib, undefined, { numeric: true })
-  );
+  const rankMode = state.rankFinish?.enabled === true;
+  const finish = rankMode ? finishCoord(state) : null;
+  const distMap = new Map<string, number>();
+  if (finish) {
+    for (const p of participants) {
+      if (!rankableFix(p)) continue;
+      distMap.set(p.id, haversineM(p.athlete.lat, p.athlete.lng, finish[1], finish[0]));
+    }
+  }
+  const sorted = [...participants].sort((a, b) => {
+    if (rankMode && finish) {
+      const da = distMap.has(a.id) ? distMap.get(a.id)! : Number.POSITIVE_INFINITY;
+      const db = distMap.has(b.id) ? distMap.get(b.id)! : Number.POSITIVE_INFINITY;
+      if (da !== db) return da - db;
+    }
+    return a.bib.localeCompare(b.bib, undefined, { numeric: true });
+  });
+  const rankNow = new Map<string, number>();
+  if (rankMode) {
+    let r = 1;
+    for (const p of sorted) {
+      if (distMap.has(p.id)) rankNow.set(p.id, r++);
+    }
+  }
   listEl.innerHTML = "";
   if (!sorted.length) {
     const empty = document.createElement("div");
@@ -214,9 +263,21 @@ function renderList(participants: Participant[], selected: string | null, state:
     const parts: string[] = [
       `<span class="dot" style="background:${p.color || "#ff3b5c"}"></span>`,
     ];
+    if (rankMode) {
+      const rank = rankNow.get(p.id);
+      const prev = prevRank.get(p.id);
+      let arrow = `<span class="rank-arrow flat">–</span>`;
+      if (rank != null && prev != null) {
+        if (rank < prev) arrow = `<span class="rank-arrow up">▲</span>`;
+        else if (rank > prev) arrow = `<span class="rank-arrow down">▼</span>`;
+      }
+      const label = rank != null ? String(rank) : "—";
+      parts.push(`<span class="rank">${arrow}<strong>${label}</strong></span>`);
+    }
     if (cols.bib) parts.push(`<span class="bib">${escapeHtml(p.bib || "—")}</span>`);
     if (cols.name) parts.push(`<span class="name">${escapeHtml(shortName(p.name))}</span>`);
-    if (cols.progress) parts.push(`<span class="progress">${km} km</span>`);
+    if (cols.progress && !rankMode) parts.push(`<span class="progress">${km} km</span>`);
+    else if (rankMode && distMap.has(p.id)) parts.push(`<span class="progress">${(distMap.get(p.id)! / 1000).toFixed(2)} km</span>`);
     if (cols.speed) parts.push(`<span class="speed">${speed}<small>km/h</small></span>`);
     if (cols.battery) parts.push(`<span class="battery">${escapeHtml(formatBattery(p))}</span>`);
     if (cols.lastUpdate) {
@@ -234,7 +295,7 @@ function renderList(participants: Participant[], selected: string | null, state:
         parts.push(
           `<span class="online coast" title="赛道推估"></span><span class="coast-tag">赛道推估</span>`
         );
-      } else if (src === "lbs" && hasPos) {
+      } else if (src === "lbs" && hasPos && !rankMode) {
         parts.push(
           `<span class="online lbs" title="LBS粗定位 ${p.athlete.lbs_match || ""}"></span><span class="lbs-tag">LBS${p.athlete.lbs_match === "exact" ? "·小区" : "·LAC"}</span>`
         );
@@ -253,6 +314,10 @@ function renderList(participants: Participant[], selected: string | null, state:
     li.innerHTML = parts.join("\n      ");
     li.addEventListener("click", () => selectParticipant(p.id));
     listEl.appendChild(li);
+  }
+  if (rankMode) {
+    prevRank.clear();
+    for (const [id, r] of rankNow) prevRank.set(id, r);
   }
 }
 
@@ -295,8 +360,13 @@ function flagEmoji(iso?: string): string {
 
 function formatPace(secPerKm?: number): string {
   if (!secPerKm || !Number.isFinite(secPerKm) || secPerKm <= 0 || secPerKm > 3600) return "—";
-  const m = Math.floor(secPerKm / 60);
-  const s = Math.round(secPerKm % 60);
+  let total = Math.round(secPerKm);
+  let m = Math.floor(total / 60);
+  let s = total % 60;
+  if (s === 60) {
+    m += 1;
+    s = 0;
+  }
   return `${m}'${String(s).padStart(2, "0")}"`;
 }
 
@@ -330,7 +400,7 @@ function renderHud(p: Participant | null) {
   const passed = Number.isFinite(p.progress_m) ? p.progress_m : p.athlete.distance;
   if (on.distance) items.push(`<div class="hud-item"><span>已过 km</span><strong>${km(passed)}</strong></div>`);
   if (on.remaining) items.push(`<div class="hud-item"><span>剩余 km</span><strong>${km(p.dist_to_finish_m)}</strong></div>`);
-  if (on.pace) items.push(`<div class="hud-item"><span>配速 /km</span><strong>${formatPace(p.pace_s_per_km)}</strong></div>`);
+  if (on.pace) items.push(`<div class="hud-item"><span>配速 min/km</span><strong>${formatPace(p.pace_s_per_km)}</strong></div>`);
   if (on.climb) items.push(`<div class="hud-item"><span>累计爬升 m</span><strong>${Math.round(p.cum_climb_m || p.athlete.climb || 0)}</strong></div>`);
   hud.classList.toggle("hidden", items.length === 0);
   hud.innerHTML = items.join("");

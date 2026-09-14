@@ -2,6 +2,7 @@ import { createWsServer } from "./ws-server.ts";
 import { pushTrailPoint } from "./downsample.ts";
 import { startDemoPublisher, DEFAULT_ATHLETES } from "./demo-publisher.ts";
 import { startH02TcpServer } from "./h02-tcp.ts";
+import { startUcastPoller } from "./ucast-poll.ts";
 import { ensureCellDbLoaded, getCellDbStats } from "./cell-lookup.ts";
 import { startAdminServer } from "./admin-server.ts";
 import {
@@ -85,6 +86,11 @@ import {
   getCourseEndsConfig,
   setCourseEndsReloadHandler,
 } from "./course-ends.ts";
+import {
+  loadRankFinishConfig,
+  getRankFinishConfig,
+  setRankFinishReloadHandler,
+} from "./rank-finish.ts";
 import { isDeviceOnline } from "./device-sessions.ts";
 
 /** No packet / no TCP within this window → offline (covers ~5min standby heartbeat). */
@@ -189,6 +195,7 @@ loadSnapConfig();
 loadTrailBreakConfig();
 loadInterpDelayConfig();
 loadCourseEndsConfig();
+loadRankFinishConfig();
 loadCoastConfig();
 if (!demo) {
   state.event = { name: getSession().event_name };
@@ -588,11 +595,14 @@ function applyTelemetry(athlete: Telemetry) {
   }
   const passed = Number.isFinite(p.progress_m) ? p.progress_m! : p.gps_distance_m || 0;
   p.athlete.distance = passed;
-  const sess = getSession();
-  const t0 = sess.started_ms;
-  if (t0 && passed > 50) {
-    const elapsedS = Math.max(1, (Date.now() - t0) / 1000);
-    p.pace_s_per_km = elapsedS / (passed / 1000);
+  // Pace = minutes per km. Prefer instant from GPS/coast speed:
+  //   sec/km = 3600 / kmh. Do not use session wall-clock / distance
+  //   (idle time after "开始场次" inflated the old number).
+  const spd = isLbs ? 0 : Number(p.athlete.speed);
+  if (Number.isFinite(spd) && spd >= 1.2) {
+    p.pace_s_per_km = 3600 / spd;
+  } else {
+    p.pace_s_per_km = undefined;
   }
 
   // Session trail: GPS + coast only. Never join LBS/coast → GPS with a yellow slash.
@@ -631,6 +641,7 @@ function emitState() {
     trailBreak: getTrailBreakConfig(),
     interpDelay: getInterpDelayConfig(),
     courseEnds: getCourseEndsConfig(),
+    rankFinish: getRankFinishConfig(),
   } as OverlayState);
 }
 
@@ -664,6 +675,7 @@ setSnapReloadHandler(() => emitState());
 setTrailBreakReloadHandler(() => emitState());
 setInterpDelayReloadHandler(() => emitState());
 setCourseEndsReloadHandler(() => emitState());
+setRankFinishReloadHandler(() => emitState());
 setCoastReloadHandler(() => emitState());
 
 setSessionTrailClearer(clearAllSessionTrails);
@@ -692,6 +704,19 @@ if (demo) {
     `[presence] onlineTimeout=${ONLINE_TIMEOUT_MS}ms fixFresh=${FIX_FRESH_MS}ms snap=${isSnapEnabled()}`
   );
   emitState();
+  startUcastPoller((t) => {
+    if (!isPlausibleDeviceId(t.device_id)) {
+      console.warn(`[ucast] drop ghost device_id=${t.device_id}`);
+      return;
+    }
+    if (!allowDevice(t.device_id)) {
+      noteUnknownSighting(t.device_id, t.lat, t.lng);
+      console.warn(`[ucast] ignore unknown device_id=${t.device_id} (pending discovery)`);
+      return;
+    }
+    applyTelemetry(t);
+    emitState();
+  });
   startH02TcpServer(
     (t) => {
       if (!isPlausibleDeviceId(t.device_id)) {

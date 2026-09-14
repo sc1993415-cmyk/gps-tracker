@@ -2,12 +2,12 @@
   "columns": {
     "bib": true,
     "name": true,
-    "progress": true,
+    "progress": false,
     "speed": true,
-    "battery": true,
+    "battery": false,
     "online": true,
     "lastUpdate": true,
-    "offCourse": true
+    "offCourse": false
   },
   "listColumns": [
     {
@@ -20,7 +20,7 @@
     },
     {
       "id": "progress",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "speed",
@@ -28,7 +28,7 @@
     },
     {
       "id": "battery",
-      "enabled": true
+      "enabled": false
     },
     {
       "id": "online",
@@ -40,7 +40,7 @@
     },
     {
       "id": "offCourse",
-      "enabled": true
+      "enabled": false
     }
   ]
 }

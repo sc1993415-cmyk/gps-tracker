@@ -81,6 +81,7 @@ export type OverlayState = {
   interpDelay?: { enabled: boolean };
   hudFields?: { id: string; enabled: boolean }[];
   courseEnds?: { enabled: boolean };
+  rankFinish?: { enabled: boolean };
 };
 
 /** Legacy single-athlete shape — wrapped as one participant when received. */
@@ -103,6 +104,7 @@ export function normalizeOverlayState(raw: unknown): OverlayState {
       interpDelay: (o.interpDelay as OverlayState["interpDelay"]) ?? undefined,
       hudFields: (o.hudFields as OverlayState["hudFields"]) ?? undefined,
       courseEnds: (o.courseEnds as OverlayState["courseEnds"]) ?? undefined,
+      rankFinish: (o.rankFinish as OverlayState["rankFinish"]) ?? undefined,
     };
   }
 

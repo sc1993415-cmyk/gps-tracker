@@ -13,3 +13,4 @@ apps/receiver/data/snap.json
 
 apps/receiver/data/cellocation-cache.json
 apps/receiver/data/cellocation-quota.json
+apps/receiver/data/ucast.json

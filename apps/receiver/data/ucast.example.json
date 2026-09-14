@@ -1,0 +1,10 @@
+{
+  "enabled": false,
+  "baseUrl": "https://api.ucastcn.com",
+  "apiKey": "65665c6cc310aa782a4fffaf01863d4e",
+  "loginname": "你的Ucast手机号",
+  "password": "你的Ucast密码",
+  "devices": [
+    { "sn": "设备SN", "device_id": "" }
+  ]
+}

@@ -8,6 +8,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "index.html"),
         elevation: resolve(__dirname, "elevation.html"),
+        rankDemo: resolve(__dirname, "rank-demo.html"),
       },
     },
   },

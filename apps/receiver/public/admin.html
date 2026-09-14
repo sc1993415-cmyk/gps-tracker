@@ -202,6 +202,34 @@
         </div>
       </div>
 
+
+<div class="panel collapsed">
+        <h2>Ucast 云端定位</h2>
+        <p class="sub" style="margin-top:0">设备不直连 5013，由 VPS 向 api.ucastcn.com 拉点。填账号、密码、SN 并启用后自动进叠层；SN 可同时写在名册设备号里方便改姓名号牌。密码不会回显。</p>
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+          <input type="checkbox" id="ucast_enabled" />
+          启用 Ucast 轮询
+        </label>
+        <div class="grid" style="margin-top:10px">
+          <label>
+            账号（手机号）
+            <input id="ucast_login" type="text" autocomplete="off" placeholder="Ucast 登录手机号" />
+          </label>
+          <label>
+            密码
+            <input id="ucast_password" type="password" autocomplete="new-password" placeholder="留空则不改已保存密码" />
+          </label>
+          <label class="span-all">
+            设备 SN（每行一个，可选「SN 名册ID」）
+            <textarea id="ucast_sns" rows="4" placeholder="ABC123456\nDEF789  7026238813"></textarea>
+          </label>
+        </div>
+        <div class="actions" style="margin-top:8px">
+          <button type="button" class="primary" id="btn-ucast-save">保存并连接</button>
+        </div>
+        <div id="ucast-status" class="sub" style="margin-top:6px"></div>
+      </div>
+
 <div class="panel collapsed">
         <h2>待确认设备（自动发现）</h2>
         <p class="sub" style="margin-top:0">陌生 H02 ID 解析成功且坐标合理、见到 ≥3 次后出现在此。不进直播图；一键添加后改姓名即可。可忽略脏 ID。</p>
@@ -265,6 +293,14 @@
             <input type="checkbox" id="course_ends_enabled" checked />
             显示起点 / 终点图标
           </label>
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-top:10px;">
+            <input type="checkbox" id="rank_finish_enabled" />
+            直线终点排名（不画黄线、不显示 LBS，按距终点直线距离排序）
+          </label>
+          <div class="actions" style="margin-top:8px">
+            <button type="button" class="primary" id="btn-rank-finish-save">保存排名方式</button>
+          </div>
+          <div id="rank-finish-status" class="sub" style="margin-top:6px"></div>
           <div class="actions" style="margin-top:8px">
             <button type="button" class="primary" id="btn-course-ends-save">保存起终点显示</button>
           </div>
@@ -1037,6 +1073,95 @@
         });
       }
       loadCourseEnds();
+
+      async function loadRankFinish() {
+        try {
+          const s = await api("/api/rank-finish");
+          if ($("rank_finish_enabled")) $("rank_finish_enabled").checked = s.enabled === true;
+          const el = $("rank-finish-status");
+          if (el) {
+            el.textContent = s.enabled ? "开 · 直线距终点排名，隐藏 LBS/轨迹" : "关 · 按号码牌列表";
+            el.className = "ok";
+          }
+        } catch (err) {
+          const el = $("rank-finish-status");
+          if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+        }
+      }
+      if ($("btn-rank-finish-save")) {
+        $("btn-rank-finish-save").addEventListener("click", async () => {
+          try {
+            const s = await api("/api/rank-finish", {
+              method: "PUT",
+              body: JSON.stringify({ enabled: !!$("rank_finish_enabled").checked }),
+            });
+            const el = $("rank-finish-status");
+            if (el) {
+              el.textContent = s.enabled ? "已保存：直线终点排名" : "已保存：关闭直线排名";
+              el.className = "ok";
+            }
+          } catch (err) {
+            const el = $("rank-finish-status");
+            if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+          }
+        });
+      }
+      loadRankFinish();
+
+      async function loadUcast() {
+        try {
+          const s = await api("/api/ucast");
+          if ($("ucast_enabled")) $("ucast_enabled").checked = s.enabled === true;
+          if ($("ucast_login")) $("ucast_login").value = s.loginname || "";
+          if ($("ucast_sns")) {
+            $("ucast_sns").value = (s.devices || []).map((d) =>
+              d.device_id ? d.sn + "  " + d.device_id : d.sn
+            ).join("\n");
+          }
+          const el = $("ucast-status");
+          if (el) {
+            const sns = (s.devices || []).map((d) => d.sn).join(", ") || "无 SN";
+            el.textContent = (s.enabled ? "开 · " : "关 · ") +
+              (s.loginname || "未填账号") + " · " + sns +
+              (s.hasPassword ? " · 已存密码" : " · 未存密码") +
+              (s.running ? " · 轮询中" : " · 未运行");
+            el.className = "ok";
+          }
+        } catch (err) {
+          const el = $("ucast-status");
+          if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+        }
+      }
+      if ($("btn-ucast-save")) {
+        $("btn-ucast-save").addEventListener("click", async () => {
+          try {
+            const s = await api("/api/ucast", {
+              method: "PUT",
+              body: JSON.stringify({
+                enabled: !!$("ucast_enabled").checked,
+                loginname: $("ucast_login").value.trim(),
+                password: $("ucast_password").value,
+                sns: $("ucast_sns").value,
+              }),
+            });
+            $("ucast_password").value = "";
+            const el = $("ucast-status");
+            if (el) {
+              el.textContent = s.enabled
+                ? "已保存并尝试连接 · " + (s.running ? "轮询已启动" : "缺账密/SN，未启动")
+                : "已保存 · 轮询关闭";
+              el.className = "ok";
+            }
+            loadUcast();
+          } catch (err) {
+            const el = $("ucast-status");
+            if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+          }
+        });
+      }
+      loadUcast();
+
+
 
 
 

@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <title>直线终点排名 · 模拟</title>
+    <style>
+      :root { --list-w: 320px; }
+      html, body, #map { margin: 0; height: 100%; background: #071427; }
+      body { overflow: hidden; font-family: system-ui, "PingFang SC", "Noto Sans SC", sans-serif; color: #eef5ff; }
+      #list-panel {
+        position: absolute; top: 16px; left: 16px; bottom: 16px; z-index: 5;
+        width: var(--list-w);
+        display: flex; flex-direction: column;
+        background: linear-gradient(180deg, rgba(12,32,58,.86), rgba(7,20,39,.8));
+        border: 1px solid rgba(140,190,255,.16);
+        border-radius: 16px;
+        backdrop-filter: blur(16px);
+        box-shadow: 0 16px 48px rgba(0,12,32,.4);
+        overflow: hidden;
+      }
+      .head {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 14px 16px 10px; border-bottom: 1px solid rgba(140,190,255,.12);
+        font: 700 12px/1 system-ui; letter-spacing: .1em; text-transform: uppercase; opacity: .8;
+      }
+      .badge { background: #ff3b5c; color: #fff; font: 700 10px/1 system-ui; padding: 4px 8px; border-radius: 4px; letter-spacing: .08em; }
+      #list { flex: 1; overflow: auto; padding: 8px; }
+      .row {
+        display: grid; grid-template-columns: 52px 12px 1fr auto;
+        gap: 8px; align-items: center;
+        padding: 9px 10px; border-radius: 10px; margin-bottom: 4px;
+      }
+      .row.up { background: rgba(124,255,178,.08); }
+      .row.down { background: rgba(255,141,160,.08); }
+      .rank { font-weight: 800; font-variant-numeric: tabular-nums; display: flex; gap: 4px; align-items: center; }
+      .arrow.up { color: #7cffb2; } .arrow.down { color: #ff8da0; } .arrow.flat { color: rgba(255,255,255,.28); }
+      .name small { display: block; opacity: .45; font-size: 11px; }
+      .dist { font-variant-numeric: tabular-nums; font-size: 12px; opacity: .75; white-space: nowrap; }
+      .note {
+        position: absolute; right: 16px; bottom: 16px; z-index: 5;
+        background: rgba(7,20,39,.75); border: 1px solid rgba(140,190,255,.16);
+        border-radius: 10px; padding: 8px 12px; font-size: 12px; opacity: .8;
+      }
+      .athlete-sim {
+        width: 16px; height: 16px; border-radius: 50%;
+        border: 2px solid #fff; box-shadow: 0 0 0 3px rgba(0,0,0,.25);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <aside id="list-panel">
+      <div class="head"><span>距终点直线</span><span class="badge">SIM</span></div>
+      <div id="list"></div>
+    </aside>
+    <div class="note" id="note">加载赛道…</div>
+    <script type="module" src="/src/rank-demo.ts"></script>
+  </body>
+</html>

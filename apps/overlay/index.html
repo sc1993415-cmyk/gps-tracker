@@ -102,6 +102,14 @@
         box-shadow: inset 3px 0 0 #3d8bfd, 0 0 0 1px rgba(61,139,253,0.35);
       }
       .participant-item .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+      .participant-item .rank {
+        display: inline-flex; align-items: center; gap: 4px;
+        min-width: 2.4em; font-variant-numeric: tabular-nums; font-weight: 700;
+      }
+      .rank-arrow { font-size: 10px; }
+      .rank-arrow.up { color: #7cffb2; }
+      .rank-arrow.down { color: #ff8da0; }
+      .rank-arrow.flat { color: rgba(255,255,255,0.35); }
       .participant-item .bib { opacity: 0.7; font-variant-numeric: tabular-nums; min-width: 1.6em; }
       .participant-item .name { flex: 1 1 72px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .participant-item .online { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-left: auto; }

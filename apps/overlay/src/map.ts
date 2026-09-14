@@ -441,7 +441,7 @@ export function createMap(
         const rt = ensureMarker(p.id, color);
         rt.el.style.setProperty("--dot-color", color);
         rt.el.classList.toggle("selected", isSelected);
-        rt.el.classList.toggle("hidden-marker", !visible);
+        rt.el.classList.toggle("hidden-marker", !visible || (state.rankFinish?.enabled === true && p.athlete?.source === "lbs"));
         rt.el.classList.toggle("lbs", p.athlete?.source === "lbs");
         rt.el.classList.toggle("coast", p.athlete?.source === "coast");
 
@@ -525,10 +525,19 @@ export function createMap(
           startOrRestartLerp(rt);
         }
 
-        if (opts.showTrails !== false && visible && p.trail.length >= 2) {
-          for (const coords of trailLineCoords(p.trail, state.trailBreak?.breakM ?? DEFAULT_TRAIL_BREAK_M)) {
+        const hideTrack = state.rankFinish?.enabled === true;
+        if (!hideTrack && opts.showTrails !== false && visible && p.trail.length >= 2) {
+          const segs = trailLineCoords(p.trail, state.trailBreak?.breakM ?? DEFAULT_TRAIL_BREAK_M);
+          segs.forEach((coords, i) => {
             const line = coords.slice();
-            if (state.interpDelay?.enabled !== false && line.length >= 2) {
+            // Only the newest segment may follow the live marker.
+            // Rewriting every segment tip created yellow spokes from old
+            // trail-breaks (LBS/jump/coast) into the current point.
+            if (
+              i === segs.length - 1 &&
+              state.interpDelay?.enabled !== false &&
+              line.length >= 2
+            ) {
               line[line.length - 1] = [rt.displayLng, rt.displayLat];
             }
             trailFeatures.push({
@@ -536,10 +545,10 @@ export function createMap(
               properties: { color, id: p.id, selected: isSelected ? 1 : 0 },
               geometry: { type: "LineString", coordinates: line },
             });
-          }
+          });
         }
 
-        if (visible && p.athlete?.source === "lbs") {
+        if (!hideTrack && visible && p.athlete?.source === "lbs") {
           const rangeM =
             typeof p.athlete.lbs_range_m === "number" && p.athlete.lbs_range_m > 50
               ? Math.min(p.athlete.lbs_range_m, 8000)

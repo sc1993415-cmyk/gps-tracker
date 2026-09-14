@@ -35,6 +35,8 @@ import {
 } from "./list-columns.ts";
 import { getHudFieldsConfig, setHudFields } from "./hud-fields.ts";
 import { getCourseEndsConfig, setCourseEndsEnabled } from "./course-ends.ts";
+import { getRankFinishConfig, setRankFinishEnabled } from "./rank-finish.ts";
+import { getUcastPublicConfig, saveUcastConfig } from "./ucast-poll.ts";
 import { uploadGpx, clearPersistedCourse } from "./gpx.ts";
 import {
   getSession,
@@ -249,6 +251,31 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
         const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
         const id = body.id ?? body.style ?? body.mapStyle;
         sendJson(res, 200, saveMapStyle(id));
+        return;
+      }
+
+      if (url.pathname === "/api/ucast" && method === "GET") {
+        sendJson(res, 200, getUcastPublicConfig());
+        return;
+      }
+
+      if (url.pathname === "/api/ucast" && (method === "PUT" || method === "POST")) {
+        const raw = (await readBody(req)).toString("utf8");
+        const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        sendJson(res, 200, saveUcastConfig(body));
+        return;
+      }
+
+      if (url.pathname === "/api/rank-finish" && method === "GET") {
+        sendJson(res, 200, getRankFinishConfig());
+        return;
+      }
+
+      if (url.pathname === "/api/rank-finish" && (method === "PUT" || method === "POST")) {
+        const raw = (await readBody(req)).toString("utf8");
+        const body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        const en = body.enabled;
+        sendJson(res, 200, setRankFinishEnabled(en === true || en === "true" || en === 1));
         return;
       }
 

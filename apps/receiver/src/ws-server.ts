@@ -64,6 +64,7 @@ export type OverlayState = {
   interpDelay?: { enabled: boolean };
   hudFields?: { id: string; enabled: boolean }[];
   courseEnds?: { enabled: boolean };
+  rankFinish?: { enabled: boolean };
 };
 
 /** Legacy single-athlete shape (kept for docs / shim reference). */
