@@ -226,7 +226,10 @@
         </div>
         <div class="actions" style="margin-top:8px">
           <button type="button" class="primary" id="btn-ucast-save">保存并连接</button>
+          <button type="button" id="btn-ucast-stop">停止轮询</button>
+          <button type="button" id="btn-ucast-start">启动轮询</button>
         </div>
+        <p class="sub" style="margin-top:6px">「停止轮询」会把开关一并关闭（重启后不会自动重连）；只想改配置就用「保存并连接」。</p>
         <div id="ucast-status" class="sub" style="margin-top:6px"></div>
       </div>
 
@@ -1129,10 +1132,32 @@
               (s.running ? " · 轮询中" : " · 未运行");
             el.className = "ok";
           }
+          if ($("btn-ucast-stop")) $("btn-ucast-stop").disabled = s.enabled !== true;
+          if ($("btn-ucast-start")) $("btn-ucast-start").disabled = s.enabled === true;
         } catch (err) {
           const el = $("ucast-status");
           if (el) { el.textContent = String(err.message || err); el.className = "err"; }
         }
+      }
+      async function ucastControl(path, done) {
+        const el = $("ucast-status");
+        try {
+          const s = await api(path, { method: "POST" });
+          await loadUcast();
+          if (el) {
+            el.textContent = done + " · " + (s.running ? "轮询中" : "未运行") +
+              (s.enabled ? " · 重启后会自动重连" : " · 重启后保持停止");
+            el.className = "ok";
+          }
+        } catch (err) {
+          if (el) { el.textContent = String(err.message || err); el.className = "err"; }
+        }
+      }
+      if ($("btn-ucast-stop")) {
+        $("btn-ucast-stop").addEventListener("click", () => ucastControl("/api/ucast/stop", "已停止轮询"));
+      }
+      if ($("btn-ucast-start")) {
+        $("btn-ucast-start").addEventListener("click", () => ucastControl("/api/ucast/start", "已启动轮询"));
       }
       if ($("btn-ucast-save")) {
         $("btn-ucast-save").addEventListener("click", async () => {

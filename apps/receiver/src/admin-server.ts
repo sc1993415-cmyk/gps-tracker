@@ -266,6 +266,18 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
         return;
       }
 
+      // One-click poller control. Both persist the enabled flag, so the state
+      // survives a receiver restart: stop => enabled:false (no auto-reconnect).
+      if (url.pathname === "/api/ucast/stop" && method === "POST") {
+        sendJson(res, 200, saveUcastConfig({ enabled: false }));
+        return;
+      }
+
+      if (url.pathname === "/api/ucast/start" && method === "POST") {
+        sendJson(res, 200, saveUcastConfig({ enabled: true }));
+        return;
+      }
+
       if (url.pathname === "/api/rank-finish" && method === "GET") {
         sendJson(res, 200, getRankFinishConfig());
         return;
