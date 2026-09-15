@@ -54,8 +54,49 @@ export function noteGps(
   state.lastGps = { pos, recvMs, rawHex };
 }
 
-export function noteLbs(state: DeviceFixState, cell: LbsCell, recvMs = Date.now()) {
+/**
+ * Record a cell snapshot (no-GPS LBS path).
+ *
+ * Authority rules — only the ASCII `*HQ` heartbeat carries a real CI, so:
+ *  - a fresh (`LBS_MAX_AGE_MS`) ASCII snapshot owns mcc/mnc/lac/ci: a later
+ *    binary (CI-less) frame may not overwrite it, it only refreshes recvMs;
+ *  - a CI-less snapshot never regresses a known CI for the same LAC;
+ *  - a cell change is reported so the caller can force a fresh lookup.
+ */
+export function noteLbs(
+  state: DeviceFixState,
+  cell: LbsCell,
+  recvMs = Date.now()
+): { changed: boolean; cell: LbsCell } {
+  const prevEntry = state.lastLbs;
+  const prev = prevEntry?.cell;
+  if (prev && prevEntry) {
+    const sameLac = prev.mcc === cell.mcc && prev.mnc === cell.mnc && prev.lac === cell.lac;
+    const prevAsciiFresh =
+      prev.from === "ascii" && recvMs - prevEntry.recvMs <= LBS_MAX_AGE_MS;
+    const incomingAscii = cell.from === "ascii";
+
+    if (!incomingAscii && prevAsciiFresh && (sameLac || !cell.ci)) {
+      state.lastLbs = { cell: prev, recvMs };
+      return { changed: false, cell: prev };
+    }
+    if (!incomingAscii && sameLac && !cell.ci && prev.ci) {
+      const merged: LbsCell = {
+        ...cell,
+        ci: prev.ci,
+        from: prev.from ?? cell.from,
+        neighbors: cell.neighbors?.length ? cell.neighbors : prev.neighbors,
+      };
+      state.lastLbs = { cell: merged, recvMs };
+      return { changed: false, cell: merged };
+    }
+    if (sameLac && prev.ci === cell.ci && (prev.from ?? "binary") === (cell.from ?? "binary")) {
+      state.lastLbs = { cell: prev, recvMs };
+      return { changed: false, cell: prev };
+    }
+  }
   state.lastLbs = { cell, recvMs };
+  return { changed: true, cell };
 }
 
 /**

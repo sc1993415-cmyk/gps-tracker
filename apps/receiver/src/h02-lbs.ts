@@ -33,6 +33,12 @@ export type LbsCell = {
   rawHex: string;
   /** True when frame was shorter than 41 in tests / truncated logs. */
   truncated: boolean;
+  /**
+   * Which frame produced this snapshot. Only the ASCII `*HQ` heartbeat carries
+   * a real CI, so "ascii" is authoritative for mcc/mnc/lac/ci while it is fresh
+   * (see noteLbs).
+   */
+  from?: "ascii" | "binary";
   neighbors?: { lac: number; ci: number; rx?: number }[];
 };
 
@@ -87,7 +93,7 @@ export function parseLbs(buf: Buffer): LbsCell | null {
 
   // rssi: TODO — offsets 10..40 unknown until full 41B hex is logged
 
-  return { mcc, mnc, lac, ci, rawHex, truncated };
+  return { mcc, mnc, lac, ci, rawHex, truncated, from: "binary" };
 }
 
 
@@ -132,5 +138,6 @@ export function parseMt909ServingCell(buf: Buffer): LbsCell | null {
     neighbors,
     rawHex: fullHex(buf),
     truncated: buf.length < MT909_BINARY_LEN,
+    from: "binary",
   };
 }

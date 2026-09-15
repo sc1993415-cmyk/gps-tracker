@@ -226,6 +226,22 @@ async function fetchOnce(
   }
 }
 
+/**
+ * True when this exact cell was asked recently and the API had no answer.
+ * Lets the caller fall back to the coarse offline LAC centroid instead of
+ * re-firing the same failed request on every frame.
+ */
+export function hasRecentCellocationMiss(
+  mcc: number,
+  mnc: number,
+  lac: number,
+  ci: number
+): boolean {
+  if (!Number.isFinite(ci) || ci <= 0) return false;
+  load();
+  return cachedNegativeFresh(mem.get(key(mcc, mnc, lac, ci)));
+}
+
 export function requestCellocation(
   mcc: number,
   mnc: number,

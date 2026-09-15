@@ -213,6 +213,28 @@ export function lookupCell(
   return null;
 }
 
+/**
+ * Exact CI-only hit — no LAC / any-MNC fallback.
+ * Used to decide whether the online cellocation API is worth asking: when the
+ * offline OpenCelliD dump has no row for this cell, `lookupCell` would still
+ * answer with a LAC centroid (hundreds of metres off), so ask the API first.
+ */
+export function lookupCellExact(
+  mcc: number,
+  mnc: number,
+  lac: number,
+  ci?: number
+): CellHit | null {
+  if (ci == null || !Number.isFinite(ci) || ci <= 0) return null;
+  if (!Number.isFinite(mcc) || !Number.isFinite(mnc) || !Number.isFinite(lac)) {
+    return null;
+  }
+  ensureCellDbLoaded();
+  const ex = exactMap.get(exactKey(mcc, mnc, lac, ci));
+  if (!ex) return null;
+  return { lat: ex.lat, lng: ex.lng, range: ex.range, match: "exact" };
+}
+
 /** Test helper: inject a tiny in-memory CSV (resets indexes). */
 export function loadDbFromCsvText(csv: string): number {
   loadFromBuffer(Buffer.from(csv, "utf8"));

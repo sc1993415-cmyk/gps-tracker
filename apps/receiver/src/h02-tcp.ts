@@ -24,8 +24,9 @@ import {
   isUsableGps,
   type FusedFix,
 } from "./h02-fix-select.ts";
-import { ensureCellDbLoaded, lookupCell } from "./cell-lookup.ts";
+import { ensureCellDbLoaded, lookupCell, lookupCellExact } from "./cell-lookup.ts";
 import {
+  hasRecentCellocationMiss,
   lookupCellocationCached,
   requestCellocation,
 } from "./cellocation.ts";
@@ -405,28 +406,50 @@ function emitLbsIfReady(
   let address: string | undefined;
 
   if (fused.mcc != null && fused.mnc != null && fused.lac != null) {
-    const local = lookupCell(fused.mcc, fused.mnc, fused.lac, fused.ci);
-    if (local) {
-      if (lat == null || lng == null || !Number.isFinite(lat) || !Number.isFinite(lng)) {
-        lat = local.lat;
-        lng = local.lng;
-      }
-      match = local.match;
-      rangeM = local.range;
-    } else if (fused.ci != null && fused.ci > 0) {
-      const net = lookupCellocationCached(fused.mcc, fused.mnc, fused.lac, fused.ci);
+    const mcc = fused.mcc;
+    const mnc = fused.mnc;
+    const lac = fused.lac;
+    const ci = fused.ci;
+    // 1) offline exact (CI) hit — most precise local answer, no API quota spent
+    const exact = lookupCellExact(mcc, mnc, lac, ci);
+    if (exact) {
+      lat = exact.lat;
+      lng = exact.lng;
+      match = "exact";
+      rangeM = exact.range;
+    } else if (ci != null && ci > 0) {
+      // 2) CI known but the offline dump has no such cell -> ask the online API
+      const net = lookupCellocationCached(mcc, mnc, lac, ci);
       if (net) {
         lat = net.lat;
         lng = net.lng;
         match = "cellocation";
         rangeM = net.range;
         address = net.address;
+      } else if (hasRecentCellocationMiss(mcc, mnc, lac, ci)) {
+        // API already answered "no" for this cell -> coarse offline centroid
+        const coarse = lookupCell(mcc, mnc, lac);
+        if (coarse) {
+          lat = coarse.lat;
+          lng = coarse.lng;
+          match = coarse.match;
+          rangeM = coarse.range;
+        }
       } else {
-        requestCellocation(fused.mcc, fused.mnc, fused.lac, fused.ci, (hit) => {
+        // Ask the API; keep the coarse offline centroid meanwhile (tagged with its
+        // own match/range) so the marker never freezes, and refine on the answer.
+        const coarse = lookupCell(mcc, mnc, lac);
+        if (coarse) {
+          lat = coarse.lat;
+          lng = coarse.lng;
+          match = coarse.match;
+          rangeM = coarse.range;
+        }
+        requestCellocation(mcc, mnc, lac, ci, (hit) => {
           console.log(
             `[h02] fused source=lbs id=${id} match=cellocation range_m=${hit.range} ` +
               `lat=${hit.lat.toFixed(5)} lng=${hit.lng.toFixed(5)} ` +
-              `mcc=${fused.mcc} mnc=${fused.mnc} lac=${fused.lac} ci=${fused.ci}`
+              `mcc=${mcc} mnc=${mnc} lac=${lac} ci=${ci}`
           );
           onTelemetry({
             device_id: id,
@@ -440,15 +463,24 @@ function emitLbsIfReady(
             name: id,
             distance: 0,
             source: "lbs",
-            mcc: fused.mcc,
-            mnc: fused.mnc,
-            lac: fused.lac,
-            ci: fused.ci,
+            mcc,
+            mnc,
+            lac,
+            ci,
             lbs_match: "cellocation",
             lbs_range_m: hit.range,
             raw_hex: fused.rawHex,
           });
         });
+      }
+    } else {
+      // 3) no CI at all (binary-only cell) -> coarse offline fallback
+      const coarse = lookupCell(mcc, mnc, lac);
+      if (coarse) {
+        lat = coarse.lat;
+        lng = coarse.lng;
+        match = coarse.match;
+        rangeM = coarse.range;
       }
     }
   }
@@ -568,11 +600,15 @@ export function startH02TcpServer(
                     " n1=" + (n1 ? n1.lac + "/" + n1.ci : "-") +
                     " n2=" + (n2 ? n2.lac + "/" + n2.ci : "-")
                 );
-                const prev = fixState.lastLbs?.cell;
-                if ((!cell.ci || cell.ci === 0) && prev?.ci && prev.ci > 0 && prev.lac === cell.lac) {
-                  cell.ci = prev.ci;
+                // ASCII heartbeat owns mcc/mnc/lac/ci while fresh; noteLbs keeps
+                // that authority and reports whether the cell actually changed.
+                const noted = noteLbs(fixState, cell, recvMs);
+                if (noted.changed) {
+                  console.log(
+                    "[h02] cell change (binary) id=" + pos.device_id +
+                      " lac=" + noted.cell.lac + " ci=" + noted.cell.ci
+                  );
                 }
-                noteLbs(fixState, cell, recvMs);
               }
             }
 
@@ -659,17 +695,19 @@ export function startH02TcpServer(
             const cellAscii = parseH02AsciiCell(sentence);
             if (cellAscii) {
               bindId(cellAscii.device_id);
-              noteLbs(fixState, {
+              const noted = noteLbs(fixState, {
                 mcc: cellAscii.mcc,
                 mnc: cellAscii.mnc,
                 lac: cellAscii.lac,
                 ci: cellAscii.ci,
                 rawHex: cellAscii.rawHex,
                 truncated: false,
+                from: "ascii",
               });
               console.log(
                 `[h02] * ascii-cell id=${cellAscii.device_id} type=${cellAscii.type} ` +
-                  `mcc=${cellAscii.mcc} mnc=${cellAscii.mnc} lac=${cellAscii.lac} ci=${cellAscii.ci}`
+                  `mcc=${cellAscii.mcc} mnc=${cellAscii.mnc} lac=${cellAscii.lac} ci=${cellAscii.ci} ` +
+                  `changed=${noted.changed}`
               );
               emitLbsIfReady(selectFix(fixState, Date.now()), cellAscii.device_id, onTelemetry, onPresence);
               if (sendAck) socket.write(buildH02Ack(cellAscii.device_id));
