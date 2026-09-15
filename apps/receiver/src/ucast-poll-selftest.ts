@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
+import type { Telemetry } from "../../../packages/schema/src/telemetry.ts";
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ucast-poll-"));
 const configPath = path.join(tmp, "ucast.json");
@@ -38,7 +39,8 @@ function encodeTick(sn: string): Buffer {
         longitude: 118_741_960,
         latitude: 32_048_110,
         altitude: 42,
-        speed: 12.5,
+        // Raw Ucast unit: 12500 ≙ 12.5 km/h.
+        speed: 12_500,
         direction: 87,
       },
     }),
@@ -117,10 +119,10 @@ try {
   const { restartUcastPoller, startUcastPoller, getUcastPublicConfig } =
     await import("./ucast-poll.ts");
 
-  const fixes: string[] = [];
+  const fixes: Telemetry[] = [];
   writeConfig(true, "BLOCKED-LOGIN-SN");
   blockNextLogin = true;
-  startUcastPoller((fix) => fixes.push(fix.device_id));
+  startUcastPoller((fix) => fixes.push(fix));
   await new Promise((resolve) => setTimeout(resolve, 25));
 
   writeConfig(true, "OLD-SN");
@@ -139,7 +141,15 @@ try {
   assert.equal(getUcastPublicConfig().running, true);
 
   socketBySn.get("CURRENT-SN")?.send(encodeTick("CURRENT-SN"));
-  await eventually(() => fixes.includes("CURRENT-SN"), "tick reaches onFix");
+  await eventually(
+    () => fixes.some((f) => f.device_id === "CURRENT-SN"),
+    "tick reaches onFix"
+  );
+  assert.equal(
+    fixes[fixes.length - 1]?.speed,
+    12.5,
+    "raw speed 12500 must reach onFix as 12.5 km/h"
+  );
 
   const oldSocket = socketBySn.get("CURRENT-SN");
   const fixesBeforeRestart = fixes.length;

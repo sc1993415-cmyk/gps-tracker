@@ -403,7 +403,9 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
             lng,
             raw_lat: lat,
             raw_lng: lng,
-            speed: Number(gps.speed) || 0,
+            // Ucast apiv3 scales speed by 1000: a raw 2426 is 2.426 km/h
+            // (m/h). Delivered Telemetry.speed must be km/h for the overlay.
+            speed: (Number(gps.speed) || 0) / 1000,
             alt_baro: Number(gps.altitude) || 0,
             heading: Number(gps.direction) || 0,
             ts: Date.now(),
