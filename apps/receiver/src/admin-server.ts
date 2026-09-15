@@ -36,7 +36,7 @@ import {
 import { getHudFieldsConfig, setHudFields } from "./hud-fields.ts";
 import { getCourseEndsConfig, setCourseEndsEnabled } from "./course-ends.ts";
 import { getRankFinishConfig, setRankFinishEnabled } from "./rank-finish.ts";
-import { getUcastPublicConfig, saveUcastConfig } from "./ucast-poll.ts";
+import { getUcastPublicConfig, getUcastStatus, saveUcastConfig } from "./ucast-poll.ts";
 import { uploadGpx, clearPersistedCourse } from "./gpx.ts";
 import {
   getSession,
@@ -268,6 +268,11 @@ export function startAdminServer(port = Number(process.env.ADMIN_PORT) || 8790) 
 
       // One-click poller control. Both persist the enabled flag, so the state
       // survives a receiver restart: stop => enabled:false (no auto-reconnect).
+      if (url.pathname === "/api/ucast/status" && method === "GET") {
+        sendJson(res, 200, getUcastStatus());
+        return;
+      }
+
       if (url.pathname === "/api/ucast/stop" && method === "POST") {
         sendJson(res, 200, saveUcastConfig({ enabled: false }));
         return;

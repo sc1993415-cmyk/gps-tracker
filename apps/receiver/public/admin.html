@@ -230,6 +230,7 @@
           <button type="button" id="btn-ucast-start">启动轮询</button>
         </div>
         <p class="sub" style="margin-top:6px">「停止轮询」会把开关一并关闭（重启后不会自动重连）；只想改配置就用「保存并连接」。</p>
+        <div id="ucast-link" style="margin-top:8px;font-weight:600"></div>
         <div id="ucast-status" class="sub" style="margin-top:6px"></div>
       </div>
 
@@ -1187,10 +1188,40 @@
         });
       }
       loadUcast();
+      if ($("ucast-link")) {
+        loadUcastStatus();
+        setInterval(() => {
+          if (!document.hidden) loadUcastStatus();
+        }, 5000);
+      }
 
 
 
 
+
+      async function loadUcastStatus() {
+        try {
+          const s = await api("/api/ucast/status");
+          const el = $("ucast-link");
+          if (!el) return;
+          const colors = { ok: "#22c55e", no_fix: "#ffd166", connected: "#7cd4ff", connecting: "#9aa7bd", error: "#ff6b6b", stopped: "#9aa7bd", disabled: "#9aa7bd" };
+          const marks = { ok: "●", no_fix: "●", connected: "●", connecting: "◌", error: "✕", stopped: "○", disabled: "○" };
+          const age = (ms) => (ms ? Math.round((Date.now() - ms) / 1000) + "s 前" : "—");
+          el.style.color = colors[s.phase] || "#9aa7bd";
+          el.textContent = (marks[s.phase] || "○") + " " + s.summary;
+          el.title = [
+            "登录成功：" + (s.last_login_ok_ms ? new Date(s.last_login_ok_ms).toLocaleTimeString("zh-CN") : "—"),
+            "WS 打开：" + (s.ws_open ? "是" : "否") + "（" + age(s.last_ws_open_ms) + "）",
+            "订阅确认：" + age(s.last_ack_ms),
+            "最近 tick：" + age(s.last_tick_ms) + "｜共 " + s.ticks + "（有效 " + s.valid_ticks + " / 无定位 " + s.no_fix_ticks + "）",
+            "最近有效坐标：" + age(s.last_valid_ms) + (s.last_valid_lat != null ? "（" + s.last_valid_lat.toFixed(5) + ", " + s.last_valid_lng.toFixed(5) + "）" : ""),
+            "最近断开：" + (s.last_close_reason || "—") + "（" + age(s.last_close_ms) + "）",
+            "最近错误：" + (s.last_login_error || s.last_error || "—"),
+          ].join("\n");
+        } catch {
+          /* 状态查询失败不影响主面板 */
+        }
+      }
 
       async function loadInterpDelay() {
         try {

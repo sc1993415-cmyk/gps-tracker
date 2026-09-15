@@ -143,6 +143,100 @@ function pollerRunning() {
   return !!stopCurrent;
 }
 
+/** Where the cloud link stands right now (admin panel: GET /api/ucast/status). */
+export type UcastPhase =
+  | "disabled" // 未启用
+  | "stopped" // 启用但轮询器未运行（缺账号/密码/SN）
+  | "connecting" // 正在登录 / 建 WS
+  | "connected" // 已接入，还没收到 tick
+  | "no_fix" // 在收 tick，但设备报无定位
+  | "ok" // 在收 tick 且有有效坐标
+  | "error"; // 最近一次失败，当前未接入
+
+export type UcastStatus = {
+  enabled: boolean;
+  running: boolean;
+  phase: UcastPhase;
+  /** 登录成功 + WS 已打开 = 与 API 接通 */
+  apiUp: boolean;
+  started_ms?: number;
+  last_login_ok_ms?: number;
+  last_login_error?: string;
+  ws_open: boolean;
+  last_ws_open_ms?: number;
+  last_ack_ms?: number;
+  last_tick_ms?: number;
+  ticks: number;
+  no_fix_ticks: number;
+  valid_ticks: number;
+  last_valid_ms?: number;
+  last_valid_lat?: number;
+  last_valid_lng?: number;
+  last_close_ms?: number;
+  last_close_reason?: string;
+  last_error?: string;
+  /** 给前端的现成中文说明 */
+  summary: string;
+};
+
+/** 收包多新才算"还在流"。 */
+const LINK_RECENT_MS = Number(process.env.UCAST_LINK_RECENT_MS) || 15_000;
+
+const link: Omit<
+  UcastStatus,
+  "enabled" | "running" | "phase" | "apiUp" | "summary"
+> = {
+  ws_open: false,
+  ticks: 0,
+  no_fix_ticks: 0,
+  valid_ticks: 0,
+};
+
+function resetLink() {
+  link.ws_open = false;
+  link.ticks = 0;
+  link.no_fix_ticks = 0;
+  link.valid_ticks = 0;
+  link.started_ms = Date.now();
+}
+
+export function getUcastStatus(): UcastStatus {
+  const cfg = loadConfig();
+  const running = pollerRunning();
+  const now = Date.now();
+  const apiUp = !!link.last_login_ok_ms && link.ws_open;
+  const tickFresh = !!link.last_tick_ms && now - link.last_tick_ms <= LINK_RECENT_MS;
+  const validFresh = !!link.last_valid_ms && now - link.last_valid_ms <= LINK_RECENT_MS;
+
+  let phase: UcastPhase;
+  if (!cfg.enabled) phase = "disabled";
+  else if (!running) phase = "stopped";
+  else if (apiUp && tickFresh && validFresh) phase = "ok";
+  else if (apiUp && tickFresh) phase = "no_fix";
+  else if (apiUp) phase = "connected";
+  else if (link.last_login_error || link.last_error) phase = "error";
+  else phase = "connecting";
+
+  const summaries: Record<UcastPhase, string> = {
+    disabled: "未启用轮询",
+    stopped: "已停止（或缺少账号 / 密码 / SN，轮询未启动）",
+    connecting: "正在连接 Ucast API…",
+    connected: "已接入 API，等待设备数据",
+    no_fix: "已接入 API · 设备无定位（tick 里 error≠0）",
+    ok: "已接入 API · 定位正常",
+    error: `接入失败：${link.last_login_error || link.last_error || "未知错误"}`,
+  };
+
+  return {
+    ...link,
+    enabled: cfg.enabled,
+    running,
+    apiUp,
+    phase,
+    summary: summaries[phase],
+  };
+}
+
 export function restartUcastPoller() {
   if (stopCurrent) {
     stopCurrent();
@@ -242,8 +336,12 @@ async function login(cfg: UcastConfig, signal: AbortSignal): Promise<string> {
   });
   const json = (await res.json()) as { error?: number; message?: string; user?: { token?: string } };
   if (json.error !== 0 || !json.user?.token) {
-    throw new Error(`ucast login failed: ${json.message || `error=${json.error ?? "unknown"}`}`);
+    const msg = json.message || `error=${json.error ?? "unknown"}`;
+    link.last_login_error = msg;
+    throw new Error(`ucast login failed: ${msg}`);
   }
+  link.last_login_ok_ms = Date.now();
+  link.last_login_error = undefined;
   console.log("[ucast] login ok");
   return json.user.token;
 }
@@ -259,6 +357,7 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
   if (stopCurrent) stopCurrent();
 
   const cfg0 = loadConfig();
+  resetLink();
   if (!cfg0.enabled) {
     console.log("[ucast] disabled (set enabled:true in data/ucast.json or UCAST_ENABLED=1)");
     return;
@@ -287,6 +386,9 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
     retryTimer = null;
     resolveRetry?.();
     resolveRetry = null;
+    link.ws_open = false;
+    link.last_close_ms = Date.now();
+    link.last_close_reason = "stopped";
     if (stopCurrent === stop) stopCurrent = null;
   };
 
@@ -330,6 +432,7 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
         },
       });
       let alive = true;
+      let ackLogged = false;
       let pollTimer: ReturnType<typeof setInterval> | null = null;
 
       const finish = () => {
@@ -363,6 +466,8 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
       ws.on("open", () => {
         if (stopped || !alive) return finish();
         console.log("[ucast] ws open");
+        link.ws_open = true;
+        link.last_ws_open_ms = Date.now();
         sendContinuous();
         pollTimer = setInterval(sendContinuous, 52_000);
       });
@@ -374,8 +479,17 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
           const msg = WsMsg.decode(raw);
           if (msg.key === "device/gps/continuous") {
             const text = contentText(msg.content);
-            if (msg.error) console.warn(`[ucast] continuous error=${msg.error} ${text}`);
-            else console.log(`[ucast] continuous ack ${text}`);
+            if (msg.error) {
+              link.last_error = `continuous error=${msg.error} ${text}`;
+              console.warn(`[ucast] continuous error=${msg.error} ${text}`);
+            } else {
+              link.last_ack_ms = Date.now();
+              console.log(`[ucast] continuous ack ${text}`);
+              if (!ackLogged) {
+                ackLogged = true;
+                console.log("[ucast] api link up (login ok + subscribe ack)");
+              }
+            }
             return;
           }
           if (msg.key === "device/gps/close") {
@@ -387,7 +501,10 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
           const gps = body.gps;
           const sn = String(body.sn || "");
           if (!gps) return;
+          link.ticks++;
+          link.last_tick_ms = Date.now();
           if (typeof gps.error === "number" && gps.error !== 0) {
+            link.no_fix_ticks++;
             console.log(`[ucast] tick no-fix sn=${sn} error=${gps.error}`);
             return;
           }
@@ -415,6 +532,10 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
             climb: 0,
             source: "gps",
           };
+          link.valid_ticks++;
+          link.last_valid_ms = Date.now();
+          link.last_valid_lat = lat;
+          link.last_valid_lng = lng;
           if (!stopped && alive) onFix(t);
         } catch (err) {
           console.warn("[ucast] tick parse", err);
@@ -422,10 +543,14 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
       });
 
       ws.on("close", (code, reason) => {
+        link.ws_open = false;
+        link.last_close_ms = Date.now();
+        link.last_close_reason = `${code} ${reason.toString()}`.trim();
         console.warn(`[ucast] ws close ${code} ${reason.toString()}`);
         finish();
       });
       ws.on("error", (err) => {
+        link.last_error = (err as Error).message;
         console.warn("[ucast] ws error", err);
         finish();
       });
