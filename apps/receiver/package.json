@@ -13,7 +13,8 @@
     "test:battery": "tsx src/battery-selftest.ts",
     "test:gpx": "tsx src/gpx-selftest.ts",
     "test:cell": "tsx src/cell-lookup-selftest.ts",
-    "test:lbs": "tsx src/h02-lbs-selftest.ts"
+    "test:lbs": "tsx src/h02-lbs-selftest.ts",
+    "test:ucast": "tsx src/ucast-poll-selftest.ts"
   },
   "dependencies": {
     "mqtt": "^5.10.3",

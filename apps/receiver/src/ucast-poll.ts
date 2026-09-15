@@ -13,7 +13,9 @@ import WebSocket from "ws";
 import type { Telemetry } from "../../../packages/schema/src/telemetry.ts";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const UCAST_PATH = path.resolve(__dirname, "../data/ucast.json");
+export const UCAST_PATH = path.resolve(
+  process.env.UCAST_CONFIG_PATH || path.resolve(__dirname, "../data/ucast.json")
+);
 
 const BASE62 = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
 
@@ -129,7 +131,7 @@ export function saveUcastConfig(body: Record<string, unknown>) {
   };
   fs.mkdirSync(path.dirname(UCAST_PATH), { recursive: true });
   fs.writeFileSync(UCAST_PATH, JSON.stringify(next, null, 2) + "\n", "utf8");
-  console.log(`[ucast] saved enabled=${enabled} login=${loginname} sns=${devices.map((d) => d.sn).join(",")}`);
+  console.log(`[ucast] saved enabled=${enabled} sns=${devices.map((d) => d.sn).join(",")}`);
   restartUcastPoller();
   return getUcastPublicConfig();
 }
@@ -144,7 +146,6 @@ function pollerRunning() {
 export function restartUcastPoller() {
   if (stopCurrent) {
     stopCurrent();
-    stopCurrent = null;
   }
   if (onFixRef) bootPoller(onFixRef);
 }
@@ -222,7 +223,7 @@ function contentJson<T>(buf: Buffer): T {
   return JSON.parse(contentText(buf)) as T;
 }
 
-async function login(cfg: UcastConfig): Promise<string> {
+async function login(cfg: UcastConfig, signal: AbortSignal): Promise<string> {
   const nonce = genNonce();
   const proof = genProof(`${cfg.loginname}:${nonce}`);
   const body = new URLSearchParams({
@@ -237,12 +238,13 @@ async function login(cfg: UcastConfig): Promise<string> {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body,
+    signal,
   });
   const json = (await res.json()) as { error?: number; message?: string; user?: { token?: string } };
   if (json.error !== 0 || !json.user?.token) {
-    throw new Error(`ucast login failed: ${json.message || JSON.stringify(json)}`);
+    throw new Error(`ucast login failed: ${json.message || `error=${json.error ?? "unknown"}`}`);
   }
-  console.log(`[ucast] login ok loginname=${cfg.loginname} token=${json.user.token.slice(0, 6)}…`);
+  console.log("[ucast] login ok");
   return json.user.token;
 }
 
@@ -252,6 +254,10 @@ function microToDeg(v: number): number {
 
 export function startUcastPoller(onFix: (t: Telemetry) => void): void {
   onFixRef = onFix;
+  // Direct starts are also replacements. This keeps callers other than the
+  // admin restart path from accidentally stacking pollers.
+  if (stopCurrent) stopCurrent();
+
   const cfg0 = loadConfig();
   if (!cfg0.enabled) {
     console.log("[ucast] disabled (set enabled:true in data/ucast.json or UCAST_ENABLED=1)");
@@ -265,17 +271,52 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
   const wsUrl = cfg0.baseUrl.replace(/^http/, "ws") + `/v3/ws/user/${encodeURIComponent(cfg0.loginname)}`;
   let seq = 1;
   let stopped = false;
+  let loginAbort: AbortController | null = null;
+  let stopSocket: (() => void) | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let resolveRetry: (() => void) | null = null;
+
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    loginAbort?.abort();
+    loginAbort = null;
+    stopSocket?.();
+    stopSocket = null;
+    if (retryTimer) clearTimeout(retryTimer);
+    retryTimer = null;
+    resolveRetry?.();
+    resolveRetry = null;
+    if (stopCurrent === stop) stopCurrent = null;
+  };
+
+  stopCurrent = stop;
+
+  const waitToReconnect = () =>
+    new Promise<void>((resolve) => {
+      if (stopped) return resolve();
+      resolveRetry = resolve;
+      retryTimer = setTimeout(() => {
+        retryTimer = null;
+        resolveRetry = null;
+        resolve();
+      }, 4000);
+    });
 
   const loop = async () => {
     while (!stopped) {
       try {
-        const token = await login(loadConfig());
+        loginAbort = new AbortController();
+        const token = await login(loadConfig(), loginAbort.signal);
+        loginAbort = null;
+        if (stopped) break;
         await runSocket(token);
       } catch (err) {
-        console.warn("[ucast] session error", err);
+        loginAbort = null;
+        if (!stopped) console.warn("[ucast] session error", err);
       }
       if (stopped) break;
-      await new Promise((r) => setTimeout(r, 4000));
+      await waitToReconnect();
     }
   };
 
@@ -295,15 +336,19 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
         if (!alive) return;
         alive = false;
         if (pollTimer) clearInterval(pollTimer);
+        pollTimer = null;
+        if (stopSocket === finish) stopSocket = null;
         try {
-          ws.close();
+          ws.terminate();
         } catch {
           /* ignore */
         }
         resolve();
       };
+      stopSocket = finish;
 
       const sendContinuous = () => {
+        if (stopped || !alive || ws.readyState !== WebSocket.OPEN) return;
         for (const d of cfg.devices) {
           const m = new WsMsg();
           m.direction = 0;
@@ -316,12 +361,14 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
       };
 
       ws.on("open", () => {
+        if (stopped || !alive) return finish();
         console.log("[ucast] ws open");
         sendContinuous();
         pollTimer = setInterval(sendContinuous, 52_000);
       });
 
       ws.on("message", (data) => {
+        if (stopped || !alive) return;
         try {
           const raw = Buffer.isBuffer(data) ? data : Buffer.from(data as ArrayBuffer);
           const msg = WsMsg.decode(raw);
@@ -366,7 +413,7 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
             climb: 0,
             source: "gps",
           };
-          onFix(t);
+          if (!stopped && alive) onFix(t);
         } catch (err) {
           console.warn("[ucast] tick parse", err);
         }
@@ -382,9 +429,6 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
       });
     });
 
-  stopCurrent = () => {
-    stopped = true;
-  };
   void loop();
   console.log(
     `[ucast] poller started devices=${cfg0.devices.map((d) => d.sn).join(",")}`
