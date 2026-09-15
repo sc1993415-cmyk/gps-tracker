@@ -3,8 +3,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getRoster, getRosterEntry, resolveRosterEntry } from "./roster.ts";
 
+/** Where a sighting came from. H02 ids are numeric; Ucast ids are the cloud SN
+ *  or an operator-assigned numeric alias. The ghost heuristics below only make
+ *  sense for H02 framing, so the two sources validate differently. */
+export type DeviceOrigin = "h02" | "ucast";
+
 export type DiscoveredDevice = {
   device_id: string;
+  /** Uplink that produced this candidate (absent in older files => h02). */
+  origin?: DeviceOrigin;
   hits: number;
   first_seen_ms: number;
   last_seen_ms: number;
@@ -15,7 +22,9 @@ export type DiscoveredDevice = {
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const DISCOVERY_PATH = path.resolve(__dirname, "../data/discovered.json");
+export const DISCOVERY_PATH = path.resolve(
+  process.env.DISCOVERY_PATH || path.resolve(__dirname, "../data/discovered.json")
+);
 
 const MIN_HITS = Number(process.env.GPS_DISCOVERY_MIN_HITS) || 3;
 /** Keep candidates this long without new hits. */
@@ -54,6 +63,7 @@ export function loadDiscovery() {
         last_seen_ms,
         last_lat: Number(o.last_lat) || 0,
         last_lng: Number(o.last_lng) || 0,
+        origin: o.origin === "ucast" ? "ucast" : "h02",
         pending: hits >= MIN_HITS,
       });
     }
@@ -76,6 +86,21 @@ export function isPlausibleDeviceId(deviceId: string): boolean {
   return true;
 }
 
+/**
+ * Ucast ids: either the cloud SN (alphanumeric, e.g. CSX9LNY9E5FZK6LAGQZQ) or a
+ * numeric alias the operator typed as the second column in the admin panel.
+ *
+ * The H02 ghost heuristics (doubled-$ ids, IMEI fragments, 24-prefixed noise)
+ * are artifacts of H02 framing and cannot occur here, so they are not applied —
+ * that is what used to silently swallow every SN-keyed tick as `drop ghost`.
+ */
+export function isPlausibleUcastDeviceId(deviceId: string): boolean {
+  const id = String(deviceId ?? "").trim();
+  if (!id) return false;
+  if (/^\d{8,15}$/.test(id)) return true;
+  return /^[A-Za-z0-9]{8,40}$/.test(id);
+}
+
 /** China-ish bbox (researcher); env GPS_DISCOVERY_GLOBAL=1 for wider. */
 export function isPlausibleCoord(lat: number, lng: number): boolean {
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return false;
@@ -88,10 +113,13 @@ export function isPlausibleCoord(lat: number, lng: number): boolean {
 export function noteUnknownSighting(
   deviceId: string,
   lat: number,
-  lng: number
+  lng: number,
+  origin: DeviceOrigin = "h02"
 ): DiscoveredDevice | null {
   const id = String(deviceId ?? "").trim();
-  if (!isPlausibleDeviceId(id)) return null;
+  if (origin === "ucast" ? !isPlausibleUcastDeviceId(id) : !isPlausibleDeviceId(id)) {
+    return null;
+  }
   if (!isPlausibleCoord(lat, lng)) return null;
   // Already on roster (by H02 id or IMEI alias) — not unknown.
   if (resolveRosterEntry(id)) return null;
@@ -106,10 +134,12 @@ export function noteUnknownSighting(
         last_seen_ms: now,
         last_lat: lat,
         last_lng: lng,
+        origin,
         pending: prev.hits + 1 >= MIN_HITS,
       }
     : {
         device_id: id,
+        origin,
         hits: 1,
         first_seen_ms: now,
         last_seen_ms: now,

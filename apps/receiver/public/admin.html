@@ -205,7 +205,7 @@
 
 <div class="panel collapsed">
         <h2>Ucast 云端定位</h2>
-        <p class="sub" style="margin-top:0">设备不直连 5013，由 VPS 向 api.ucastcn.com 拉点。填账号、密码、SN 并启用后自动进叠层；SN 可同时写在名册设备号里方便改姓名号牌。密码不会回显。</p>
+        <p class="sub" style="margin-top:0">设备不直连 5013，由 VPS 向 api.ucastcn.com 拉点。填账号、密码、SN 并勾选启用即可。<b>只填 SN 也能用</b>：系统会拿 SN 当设备号上报，设备随后出现在下方「待确认设备」里，一键加入名册就能上叠层。想一步到位，可在 SN 后面空一格写上名册设备号（8–15 位数字），该设备就直接按这个号匹配名册。密码不会回显。</p>
         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
           <input type="checkbox" id="ucast_enabled" />
           启用 Ucast 轮询
@@ -220,8 +220,8 @@
             <input id="ucast_password" type="password" autocomplete="new-password" placeholder="留空则不改已保存密码" />
           </label>
           <label class="span-all">
-            设备 SN（每行一个，可选「SN 名册ID」）
-            <textarea id="ucast_sns" rows="4" placeholder="ABC123456\nDEF789  7026238813"></textarea>
+            设备 SN（每行一个，可只写 SN，也可写「SN 名册ID」）
+            <textarea id="ucast_sns" rows="4" placeholder="ABC123456&#10;DEF789  7026238813"></textarea>
           </label>
         </div>
         <div class="actions" style="margin-top:8px">
@@ -232,7 +232,7 @@
 
 <div class="panel collapsed">
         <h2>待确认设备（自动发现）</h2>
-        <p class="sub" style="margin-top:0">陌生 H02 ID 解析成功且坐标合理、见到 ≥3 次后出现在此。不进直播图；一键添加后改姓名即可。可忽略脏 ID。</p>
+        <p class="sub" style="margin-top:0">陌生设备号（H02 的数字 ID，或 Ucast 的 SN）解析成功且坐标合理、见到 ≥3 次后出现在此。不进直播图；一键添加后改姓名即可。可忽略脏 ID。</p>
         <div class="actions" style="margin-bottom:10px">
           <button type="button" id="btn-discovered-reload">刷新待确认</button>
         </div>
@@ -598,6 +598,7 @@
             <thead>
               <tr>
                 <th>设备号</th>
+                <th>来源</th>
                 <th>次数</th>
                 <th>最后坐标</th>
                 <th>最后见到</th>
@@ -608,6 +609,7 @@
               ${list.map((d) => `
                 <tr data-id="${encodeURIComponent(d.device_id)}">
                   <td class="mono">${escapeHtml(d.device_id)}</td>
+                  <td>${d.origin === "ucast" ? "Ucast" : "H02"}</td>
                   <td>${d.hits}</td>
                   <td class="mono">${Number(d.last_lat).toFixed(5)}, ${Number(d.last_lng).toFixed(5)}</td>
                   <td>${escapeHtml(fmt(d.last_seen_ms))}</td>

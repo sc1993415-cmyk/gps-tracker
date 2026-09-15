@@ -14,7 +14,9 @@ export type RosterEntry = {
 };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const ROSTER_PATH = path.resolve(__dirname, "../data/roster.json");
+export const ROSTER_PATH = path.resolve(
+  process.env.ROSTER_PATH || path.resolve(__dirname, "../data/roster.json")
+);
 
 let rosterByDevice = new Map<string, RosterEntry>();
 let onReload: (() => void) | null = null;

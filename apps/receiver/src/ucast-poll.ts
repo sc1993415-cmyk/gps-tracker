@@ -435,6 +435,13 @@ export function startUcastPoller(onFix: (t: Telemetry) => void): void {
   console.log(
     `[ucast] poller started devices=${cfg0.devices.map((d) => d.sn).join(",")}`
   );
+  const noAlias = cfg0.devices.filter((d) => !(d.device_id || "").trim());
+  if (noAlias.length) {
+    console.log(
+      `[ucast] no numeric alias for ${noAlias.map((d) => d.sn).join(",")} — ticks report the SN ` +
+        "as device_id and surface in pending discovery until bound on the roster"
+    );
+  }
 }
 
 function bootPoller(onFix: (t: Telemetry) => void) {

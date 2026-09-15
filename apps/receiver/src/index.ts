@@ -17,6 +17,7 @@ import {
   noteUnknownSighting,
   clearDiscoveredOnRoster,
   isPlausibleDeviceId,
+  isPlausibleUcastDeviceId,
 } from "./discovery.ts";
 import {
   loadMapStyle,
@@ -705,12 +706,15 @@ if (demo) {
   );
   emitState();
   startUcastPoller((t) => {
-    if (!isPlausibleDeviceId(t.device_id)) {
-      console.warn(`[ucast] drop ghost device_id=${t.device_id}`);
+    // Ucast ids are the cloud SN or a numeric alias. The H02 ghost heuristics
+    // do not apply here, so a bare SN now reaches discovery instead of being
+    // silently dropped as `drop ghost`.
+    if (!isPlausibleUcastDeviceId(t.device_id)) {
+      console.warn(`[ucast] drop invalid device_id=${t.device_id}`);
       return;
     }
     if (!allowDevice(t.device_id)) {
-      noteUnknownSighting(t.device_id, t.lat, t.lng);
+      noteUnknownSighting(t.device_id, t.lat, t.lng, "ucast");
       console.warn(`[ucast] ignore unknown device_id=${t.device_id} (pending discovery)`);
       return;
     }
